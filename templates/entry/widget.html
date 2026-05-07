@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Python Demo App widget</title>
+    <link rel="stylesheet" href="/assets/entry/widget.css">
+    <script type="text/javascript"
+            src="https://cdn.jsdelivr.net/npm/@moysklad-official/js-widget-sdk@1/dist/widget.min.js"></script>
+</head>
+<body data-get-object-url="{{ get_object_url }}">
+<main>
+    <section class="panel settings">
+        <h2 title="Информацию о текущем пользователе виджет может получить на своем бэкенде через Vendor API">
+            Текущий пользователь <span class="hint">(?)</span>
+        </h2>
+        <div>{{ uid }} ({{ fio }})</div>
+        <div class="panel-divider"></div>
+        <h2 title="Используя objectId, переданный в сообщении Open, можем получить через JSON API открытую пользователем сущность/документ">
+            Открытый объект <span class="hint">(?)</span>
+        </h2>
+        <div id="object">-</div>
+        <div class="panel-divider"></div>
+        <h2>good-folder-selector</h2>
+        <div class="row">
+            <button class="btn" id="btnSelectFolder">Выбрать</button>
+        </div>
+        <div class="panel-divider"></div>
+        <h2>navigation-service</h2>
+        <div class="row field-row">
+            <label for="navigatePath">Путь</label>
+            <input id="navigatePath" value="#customerorder?sort=o.moment%20d">
+        </div>
+        <div class="row">
+            <button class="btn" id="btnNavigate">Перейти</button>
+        </div>
+        <div class="panel-divider"></div>
+        <h2>standard-dialogs</h2>
+        <div class="row field-row">
+            <label for="dialogText">Текст диалога</label>
+            <input id="dialogText" value="Hello from SDK">
+        </div>
+        <div class="row field-row">
+            <label for="dialogButtons">Кнопки диалога (JSON)</label>
+            <textarea
+                id="dialogButtons">[{ "name": "Yes", "caption": "Да, удалить" },{ "name": "No", "caption": "Нет" }]</textarea>
+        </div>
+        <div class="row">
+            <button class="btn" id="btnDialog">Открыть</button>
+        </div>
+        <div class="panel-divider"></div>
+        <h2>dirty-state</h2>
+        <div class="row grid-2">
+            <button class="btn" id="btnSetDirty">Установить</button>
+            <button class="btn" id="btnClearDirty">Очистить</button>
+        </div>
+        <div class="panel-divider"></div>
+        <h2>validation-feedback</h2>
+        <div class="row field-row">
+            <label for="validationPayload">Параметры валидации (JSON или text)</label>
+            <textarea id="validationPayload">{ "name": "ValidationFeedback", "correlationId": 1, "messageId": 1, "valid": false, "message": "Нужно больше печенья" }</textarea>
+        </div>
+        <div class="row">
+            <button class="btn" id="btnValidation">Подтвердить</button>
+        </div>
+        <div class="panel-divider"></div>
+        <h2>update-provider</h2>
+        <div class="row field-row">
+            <label for="updatePayload">Параметры обновления (JSON or text)</label>
+            <textarea id="updatePayload">{ "name": "1" }</textarea>
+        </div>
+        <div class="row">
+            <button class="btn" id="btnUpdate">Обновить</button>
+        </div>
+        <div class="panel-divider"></div>
+        <h2>Popups</h2>
+        <div class="row field-row">
+            <label for="popupName">Название попапа</label>
+            <input id="popupName" value="some-popup">
+        </div>
+        <div class="row field-row">
+            <label for="popupParams">Параметры попапа (JSON)</label>
+            <textarea id="popupParams">{ "foo": "bar" }</textarea>
+        </div>
+        <div class="row btn-row">
+            <button class="btn" id="btnShowPopup">Открыть</button>
+            <button class="btn" id="btnClosePopup">Закрыть</button>
+        </div>
+    </section>
+    <section class="panel output">
+        <h2>Логи</h2>
+        <div id="log"></div>
+    </section>
+</main>
+<script src="/assets/entry/widget.js"></script>
+</body>
+</html>

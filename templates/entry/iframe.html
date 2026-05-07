@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Python Demo App iframe</title>
+    <link rel="stylesheet" href="/assets/entry/iframe.css">
+    <script type="text/javascript"
+            src="https://apps-api.moysklad.ru/js/ns/appstore/app/v1/moysklad-iframe-expand-3.js"></script>
+</head>
+<body>
+<main class="iframe-layout">
+    <section class="panel">
+        <h2>Информация о пользователе</h2>
+        <ul class="info-list">
+            <li>Текущий пользователь: {{ uid }} ({{ fio }})</li>
+            <li>Идентификатор аккаунта: {{ account_id }}</li>
+            <li>Уровень доступа: <b>{{ access_level }}</b></li>
+        </ul>
+        <div class="panel-divider"></div>
+        <h2>Состояние решения</h2>
+        <div class="status-box {{ status_class }}">
+            <div class="status-title">{{ status_title }}</div>
+            {% if show_status_details %}
+                <p>
+                    Сообщение: {{ info_message }}<br>
+                    Выбран склад: {{ store }}
+                </p>
+            {% endif %}
+        </div>
+    </section>
+    <section class="panel">
+        <h2>Форма настроек</h2>
+        {% if is_admin %}
+            <form method="post" action="../utils/update-settings">
+                <div class="row field-row">
+                    <label for="infoMessage">Укажите сообщение</label>
+                    <input id="infoMessage" type="text" name="infoMessage">
+                </div>
+                <div class="row field-row">
+                    <label for="store">Выберите склад</label>
+                    <select id="store" name="store">
+                        {% for value in stores_values %}
+                            <option value="{{ value }}">{{ value }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <input type="hidden" name="contextKey" value="{{ context_key }}"/>
+                <button class="btn" type="submit">Сохранить</button>
+            </form>
+        {% else %}
+            <p class="muted">Настройки доступны только администратору аккаунта</p>
+        {% endif %}
+    </section>
+</main>
+</body>
+</html>
