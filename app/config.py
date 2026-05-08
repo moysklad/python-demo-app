@@ -15,13 +15,13 @@ SAME_SITE_VALUES = {"lax", "strict", "none"}
 
 @dataclass(frozen=True)
 class AppConfig:
-    app_id: str
-    app_uid: str
-    secret_key: str
-    encrypt_key: str
-    app_base_url: str
-    session_secret: str
-    port: int = 3000
+    app_id: str = ""
+    app_uid: str = ""
+    secret_key: str = ""
+    encrypt_key: str = ""
+    app_base_url: str = ""
+    session_secret: str = ""
+    port: int = 8080
     log_level: str = "DEBUG"
     moysklad_vendor_api_endpoint_url: str = "https://apps-api.moysklad.ru/api/vendor/1.0"
     moysklad_json_api_endpoint_url: str = "https://api.moysklad.ru/api/remap/1.2"
@@ -41,9 +41,10 @@ def load_config(env: Mapping[str, str] | None = None, *, load_dotenv_file: bool 
     else:
         source = env
 
+    defaults = AppConfig()
     cwd = Path.cwd()
-    data_dir = _resolve_path(cwd, source.get("DATA_DIR", "./tmp/data"))
-    app_db_path = _resolve_path(cwd, source.get("APP_DB_PATH", "./tmp/data/app.sqlite"))
+    data_dir = _resolve_path(cwd, source.get("DATA_DIR", str(defaults.data_dir)))
+    app_db_path = _resolve_path(cwd, source.get("APP_DB_PATH", str(defaults.app_db_path)))
 
     config = AppConfig(
         app_id=_required(source, "APP_ID"),
@@ -52,20 +53,27 @@ def load_config(env: Mapping[str, str] | None = None, *, load_dotenv_file: bool 
         encrypt_key=_required(source, "APP_ENCRYPT_KEY"),
         app_base_url=_required(source, "APP_BASE_URL"),
         session_secret=_required(source, "SESSION_SECRET"),
-        port=_int_value(source, "PORT", 3000),
-        log_level=source.get("LOG_LEVEL", "DEBUG").upper(),
+        port=_int_value(source, "PORT", defaults.port),
+        log_level=source.get("LOG_LEVEL", defaults.log_level).upper(),
         moysklad_vendor_api_endpoint_url=source.get(
             "MOYSKLAD_VENDOR_API_ENDPOINT_URL",
-            "https://apps-api.moysklad.ru/api/vendor/1.0",
+            defaults.moysklad_vendor_api_endpoint_url,
         ),
         moysklad_json_api_endpoint_url=source.get(
             "MOYSKLAD_JSON_API_ENDPOINT_URL",
-            "https://api.moysklad.ru/api/remap/1.2",
+            defaults.moysklad_json_api_endpoint_url,
         ),
-        session_cookie_secure=_bool_value(source, "SESSION_COOKIE_SECURE", True),
-        session_cookie_same_site=source.get("SESSION_COOKIE_SAME_SITE", "none").lower(),
-        session_name=source.get("SESSION_NAME", "connect.sid"),
-        trust_proxy=_int_value(source, "TRUST_PROXY", 1),
+        session_cookie_secure=_bool_value(
+            source,
+            "SESSION_COOKIE_SECURE",
+            defaults.session_cookie_secure,
+        ),
+        session_cookie_same_site=source.get(
+            "SESSION_COOKIE_SAME_SITE",
+            defaults.session_cookie_same_site,
+        ).lower(),
+        session_name=source.get("SESSION_NAME", defaults.session_name),
+        trust_proxy=_int_value(source, "TRUST_PROXY", defaults.trust_proxy),
         data_dir=data_dir,
         app_db_path=app_db_path,
     )

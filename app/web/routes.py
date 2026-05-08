@@ -3,12 +3,11 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from flask import Flask, Response, jsonify, render_template, request, session
+from flask import Flask, jsonify, render_template, request, session
 
 from app.domain.entities import is_supported_entity
 from app.security.jwt_tools import auth_token_is_valid
 from app.services.common import ServiceResponse
-from app.services.descriptor import build_descriptor_xml
 from app.services.user_context import get_context_key
 
 
@@ -22,10 +21,6 @@ def register_routes(app: Flask, services: Any) -> None:
                 "uptimeSeconds": round(time.monotonic() - app.config["STARTED_AT"]),
             }
         )
-
-    @app.get("/descriptor.xml")
-    def descriptor():
-        return Response(build_descriptor_xml(services.config), mimetype="application/xml")
 
     @app.get("/entry/iframe")
     def iframe():

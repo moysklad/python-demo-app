@@ -17,7 +17,7 @@ def app_config(tmp_path: Path) -> AppConfig:
         app_uid="local-dev-app-uid",
         secret_key="local-dev-secret-key-32-characters",
         encrypt_key="00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
-        app_base_url="http://localhost:3000",
+        app_base_url="http://localhost:8080",
         session_secret="local-dev-session-secret-32-chars",
         session_cookie_secure=False,
         session_cookie_same_site="lax",
