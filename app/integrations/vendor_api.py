@@ -12,26 +12,22 @@ class VendorApi:
         self._config = config
         self._http_client = http_client or HttpClient()
 
-    def context(self, context_key: str) -> dict[str, Any] | None:
-        return self._request("POST", f"/context/{context_key}", {})
-
-    def update_app_status(self, app_id: str, account_id: str, status: str) -> dict[str, Any] | None:
+    def get_context(self, context_key: str) -> dict[str, Any] | None:
+        body = {}
         return self._http_client.request_json(
-            "PUT",
-            f"{self._config.moysklad_vendor_api_endpoint_url}/apps/{app_id}/{account_id}/status",
-            build_vendor_api_jwt(self._config),
-            {"status": status},
-            service_name="vendor-api",
-            retryable=True,
-            allow_empty_success_response=True,
-        )
-
-    def _request(self, method: str, path: str, body: Any = None) -> dict[str, Any] | None:
-        return self._http_client.request_json(
-            method,
-            f"{self._config.moysklad_vendor_api_endpoint_url}{path}",
+            "POST",
+            f"{self._config.moysklad_vendor_api_endpoint_url}/context/{context_key}",
             build_vendor_api_jwt(self._config),
             body,
             service_name="vendor-api",
-            retryable=method.upper() != "POST",
+        )
+
+    def update_app_status(self, app_id: str, account_id: str, status: str) -> bool:
+        body = {"status": status}
+        return self._http_client.execute(
+            "PUT",
+            f"{self._config.moysklad_vendor_api_endpoint_url}/apps/{app_id}/{account_id}/status",
+            build_vendor_api_jwt(self._config),
+            body,
+            service_name="vendor-api",
         )

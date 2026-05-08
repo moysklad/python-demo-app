@@ -44,8 +44,8 @@ class UtilsService:
         app.store = normalized_store
         app.status = AppStatus.ACTIVATED
 
-        status_update_result = self._vendor_api.update_app_status(self._config.app_id, auth_context.account_id, app.get_status_name() or "")
-        if status_update_result is None:
+        status_updated = self._vendor_api.update_app_status(self._config.app_id, auth_context.account_id, app.get_status_name() or "")
+        if not status_updated:
             return ServiceResponse(status_code=502, text_body="Не удалось обновить статус приложения во внешнем Vendor API")
 
         self._app_repository.save(app)

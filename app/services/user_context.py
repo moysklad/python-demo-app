@@ -45,7 +45,7 @@ class UserContextService:
             return cached_context
 
         log_message("DEBUG", "Loading user context from Vendor API")
-        employee = self._vendor_api.context(context_key)
+        employee = self._vendor_api.get_context(context_key)
         if not employee or not employee.get("accountId") or not employee.get("uid"):
             return None
 
