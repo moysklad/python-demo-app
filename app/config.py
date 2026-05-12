@@ -9,6 +9,8 @@ from typing import Mapping
 
 from dotenv import load_dotenv
 
+from app.logging_filters import SensitiveDataFilter
+
 
 LOG_LEVELS = {"DEBUG", "INFO", "WARN", "ERROR"}
 SAME_SITE_VALUES = {"lax", "strict", "none"}
@@ -21,6 +23,8 @@ def configure_logging(level: str) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
         force=True,
     )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(SensitiveDataFilter())
 
 
 @dataclass(frozen=True)

@@ -116,13 +116,13 @@ def _register_request_logging(app: Flask) -> None:
         should_log_body = request.path.startswith("/vendor-endpoint")
         body = request.get_json(silent=True) if should_log_body else None
         request_line = f"{request.method} {request.path}"
-        body_suffix = f" body={body}" if should_log_body and body is not None else ""
-        logger.debug(
-            "HTTP request started %s queryKeys=%s%s",
-            request_line,
-            list(request.args.keys()),
-            body_suffix,
-        )
+        log_message = "HTTP request started %s queryKeys=%s"
+        log_args = [request_line, list(request.args.keys())]
+        if should_log_body and body is not None:
+            log_message += "\n\n%s"
+            log_args.append(body)
+
+        logger.debug(log_message, *log_args)
 
     @app.after_request
     def log_request_completed(response):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from http import HTTPStatus
 from dataclasses import dataclass
 from typing import Any
 
@@ -106,12 +107,14 @@ class HttpClient:
             headers["Content-Type"] = "application/json"
             request_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
 
-        logger.debug(
-            "Request %s service=%s%s",
-            request_line,
-            service_name,
-            f" body={data}" if data is not None else "",
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            log_message = "Request %s service=%s\nheaders=%s"
+            log_args = [request_line, service_name, headers]
+            if data is not None:
+                log_message += "\n\n%s"
+                log_args.append(data)
+
+            logger.debug(log_message, *log_args)
         started_at = time.time()
 
         try:
@@ -142,17 +145,16 @@ class HttpClient:
         attempt = _response_attempt_count(response)
         body = _decode_response_body(response.data)
 
-        logger.debug(
-            "Response %s service=%s status=%s attempt=%s durationMs=%s body=%s",
-            request_line,
-            service_name,
-            response.status,
-            attempt,
-            duration_ms,
-            _sanitize_response_body_for_log(body),
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            log_message = "Response %s service=%s status=%s attempt=%s durationMs=%s\nheaders=%s"
+            log_args = [request_line, service_name, response.status, attempt, duration_ms, getattr(response, "headers", None)]
+            if body != "":
+                log_message += "\n\n%s"
+                log_args.append(_sanitize_response_body_for_log(body))
 
-        if response.status < 200 or response.status >= 300:
+            logger.debug(log_message, *log_args)
+
+        if not HTTPStatus.OK <= response.status < HTTPStatus.MULTIPLE_CHOICES:
             logger.warning(
                 "HTTP error %s service=%s status=%s attempt=%s durationMs=%s",
                 request_line,

@@ -4,6 +4,7 @@ import logging
 
 from app.config import AppConfig, load_config
 from app.config import configure_logging
+from app.logging_filters import SensitiveDataFilter
 
 
 def test_load_config_uses_app_config_defaults_for_optional_values():
@@ -39,3 +40,4 @@ def test_configure_logging_sets_timestamp_and_logger_name():
     assert handler.formatter is not None
     assert handler.formatter._fmt == "%(asctime)s %(levelname)s %(name)s %(message)s"
     assert handler.formatter.datefmt == "%Y-%m-%d %H:%M:%S"
+    assert any(isinstance(log_filter, SensitiveDataFilter) for log_filter in handler.filters)
