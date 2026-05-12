@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
+
 from app.config import AppConfig, load_config
+from app.config import configure_logging
 
 
 def test_load_config_uses_app_config_defaults_for_optional_values():
@@ -24,3 +27,15 @@ def test_load_config_uses_app_config_defaults_for_optional_values():
     assert config.session_cookie_same_site == defaults.session_cookie_same_site
     assert config.session_name == defaults.session_name
     assert config.trust_proxy == defaults.trust_proxy
+
+
+def test_configure_logging_sets_timestamp_and_logger_name():
+    configure_logging("INFO")
+
+    root_logger = logging.getLogger()
+    handler = root_logger.handlers[0]
+
+    assert root_logger.level == logging.INFO
+    assert handler.formatter is not None
+    assert handler.formatter._fmt == "%(asctime)s %(levelname)s %(name)s %(message)s"
+    assert handler.formatter.datefmt == "%Y-%m-%d %H:%M:%S"

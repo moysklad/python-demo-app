@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -9,13 +10,13 @@ import urllib3
 from urllib3.exceptions import HTTPError
 from urllib3.util import Retry
 
-from app.logging import log_message
-
-
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_MAX_RETRIES = 2
 DEFAULT_HTTP_RETRY_BASE_SECONDS = 0.25
 MAX_LOGGED_RESPONSE_BODY_CHARS = 2000
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,15 +54,14 @@ class HttpClient:
         try:
             return json.loads(result.body)
         except ValueError as error:
-            log_message(
-                "WARN",
-                f"Failed to decode JSON for {method.upper()} {url}: {error}",
-                {
-                    "service": service_name,
-                    "kind": "decode",
-                    "attempt": result.attempt,
-                    "durationMs": result.duration_ms,
-                },
+            request_line = f"{method.upper()} {url}"
+            logger.warning(
+                "Failed to decode JSON for %s service=%s error=%s attempt=%s durationMs=%s",
+                request_line,
+                service_name,
+                error,
+                result.attempt,
+                result.duration_ms,
             )
             return None
 
@@ -94,6 +94,7 @@ class HttpClient:
         retryable: bool | None,
     ) -> _HttpResult | None:
         normalized_method = method.upper()
+        request_line = f"{normalized_method} {url}"
         retries = _build_retries(retryable)
         headers = {
             "Authorization": f"Bearer {bearer_token}",
@@ -105,8 +106,12 @@ class HttpClient:
             headers["Content-Type"] = "application/json"
             request_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
 
-        log_message("DEBUG", f"Request: {normalized_method} {url}",
-                    {"service": service_name, "headers": headers, "body": data})
+        logger.debug(
+            "Request %s service=%s%s",
+            request_line,
+            service_name,
+            f" body={data}" if data is not None else "",
+        )
         started_at = time.time()
 
         try:
@@ -123,11 +128,13 @@ class HttpClient:
             )
         except HTTPError as error:
             duration_ms = int((time.time() - started_at) * 1000)
-            log_message(
-                "ERROR",
-                f"Transport error for {normalized_method} {url}: {error}",
-                {"service": service_name, "kind": "transport", "attempt": _retry_attempt_count(retries),
-                 "durationMs": duration_ms},
+            logger.error(
+                "Transport error %s service=%s error=%s attempt=%s durationMs=%s",
+                request_line,
+                service_name,
+                error,
+                _retry_attempt_count(retries),
+                duration_ms,
             )
             return None
 
@@ -135,25 +142,24 @@ class HttpClient:
         attempt = _response_attempt_count(response)
         body = _decode_response_body(response.data)
 
-        log_message(
-            "DEBUG",
-            f"Response: {normalized_method} {url}",
-            {
-                "service": service_name,
-                "status": response.status,
-                "attempt": attempt,
-                "durationMs": duration_ms,
-                "headers": dict(response.headers),
-                "body": _sanitize_response_body_for_log(body),
-            },
+        logger.debug(
+            "Response %s service=%s status=%s attempt=%s durationMs=%s body=%s",
+            request_line,
+            service_name,
+            response.status,
+            attempt,
+            duration_ms,
+            _sanitize_response_body_for_log(body),
         )
 
         if response.status < 200 or response.status >= 300:
-            log_message(
-                "WARN",
-                f"HTTP {response.status} for {normalized_method} {url}",
-                {"service": service_name, "kind": "http", "status": response.status, "attempt": attempt,
-                 "durationMs": duration_ms},
+            logger.warning(
+                "HTTP error %s service=%s status=%s attempt=%s durationMs=%s",
+                request_line,
+                service_name,
+                response.status,
+                attempt,
+                duration_ms,
             )
             return None
 

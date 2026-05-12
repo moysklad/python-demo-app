@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.domain.app_instance import AppInstance, AppInstanceRepository, AppStatus
-from app.logging import log_message
 from app.services.buttons import process_document_button_click, process_list_button_click
 from app.services.common import ServiceResponse
+
+
+logger = logging.getLogger(__name__)
 
 
 class VendorEndpointService:
@@ -32,24 +35,24 @@ class VendorEndpointService:
 
         self._app_repository.save(app)
         status = app.get_status_name()
-        log_message("INFO", f"App appId={app_id} installed on accountId={account_id}. Status: {status}")
+        logger.info("App appId=%s installed on accountId=%s. Status: %s", app_id, account_id, status)
         return ServiceResponse(json_body={"status": status})
 
     def delete_app(self, app_id: str, account_id: str, body: dict[str, Any]) -> ServiceResponse:
         app = self._app_repository.load(app_id, account_id) or AppInstance(app_id, account_id)
         if not app.is_installed():
-            log_message("INFO", f"App appId={app_id} not installed on accountId={account_id}")
+            logger.info("App appId=%s not installed on accountId=%s", app_id, account_id)
             return ServiceResponse(status_code=204)
 
         cause = body.get("cause")
         if cause == "Uninstall":
             self._app_repository.delete(app_id, account_id)
-            log_message("INFO", f"App appId={app_id} deleted on accountId={account_id}, cause={cause}")
+            logger.info("App appId=%s deleted on accountId=%s, cause=%s", app_id, account_id, cause)
         elif cause == "Suspend":
             app.status = AppStatus.SUSPENDED
             app.access_token = ""
             self._app_repository.save(app)
-            log_message("INFO", f"App appId={app_id} suspended on accountId={account_id}, cause={cause}")
+            logger.info("App appId=%s suspended on accountId=%s, cause=%s", app_id, account_id, cause)
         else:
             return ServiceResponse(status_code=400, text_body="Invalid delete request")
 
@@ -58,14 +61,15 @@ class VendorEndpointService:
     def app_event(self, app_id: str, account_id: str, body: dict[str, Any]) -> ServiceResponse:
         app = self._app_repository.load(app_id, account_id) or AppInstance(app_id, account_id)
         if not app.is_installed():
-            log_message("INFO", f"App appId={app_id} not installed on accountId={account_id}")
+            logger.info("App appId=%s not installed on accountId=%s", app_id, account_id)
             return ServiceResponse(status_code=204)
 
         if body.get("cause") == "PermissionsChanged":
             access = body.get("access")
-            log_message(
-                "INFO",
-                f"Permissions changed for appId={app_id} on accountId={account_id}",
+            logger.info(
+                "Permissions changed for appId=%s on accountId=%s, %s",
+                app_id,
+                account_id,
                 {"accessItems": len(access) if isinstance(access, list) else 0},
             )
 

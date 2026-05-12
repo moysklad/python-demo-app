@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from app.factory import create_app
 from app.repositories.memory import MemoryAppInstanceRepository, MemoryJwtReplayRepository
 
@@ -93,3 +95,24 @@ def test_static_assets_do_not_resave_loaded_session(app_config):
     assert response.status_code == 200
     assert session_repository.save_calls == 0
     assert session_repository.delete_calls == 0
+
+
+def test_request_logging_is_not_registered_for_non_debug_level(app_config, monkeypatch):
+    app_config = replace(app_config, log_level="INFO")
+    called = False
+
+    def fake_register_request_logging(app):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("app.factory._register_request_logging", fake_register_request_logging)
+
+    create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+
+    assert called is False
