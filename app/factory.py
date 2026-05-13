@@ -14,7 +14,12 @@ from app.domain.app_instance import AppInstanceRepository
 from app.integrations.http_client import HttpClient
 from app.integrations.json_api import JsonApiFactory
 from app.integrations.vendor_api import VendorApi
-from app.repositories.sqlite import SqliteAppInstanceRepository, SqliteJwtReplayRepository, SqliteSessionRepository
+from app.repositories.sqlite import (
+    SqliteAppInstanceRepository,
+    SqliteConnectionPool,
+    SqliteJwtReplayRepository,
+    SqliteSessionRepository,
+)
 from app.security.crypto import ensure_private_dir
 from app.security.jwt_tools import JwtReplayRepository
 from app.services.entry import EntryService
@@ -73,9 +78,21 @@ def create_app(
             x_prefix=runtime_config.trust_proxy,
         )
 
-    real_app_repository = app_repository or SqliteAppInstanceRepository(runtime_config.app_db_path, runtime_config.encrypt_key)
-    real_jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(runtime_config.app_db_path)
-    session_repository = SqliteSessionRepository(runtime_config.app_db_path, runtime_config.encrypt_key)
+    sqlite_pool = SqliteConnectionPool(runtime_config.app_db_path)
+    real_app_repository = app_repository or SqliteAppInstanceRepository(
+        runtime_config.app_db_path,
+        runtime_config.encrypt_key,
+        sqlite_pool,
+    )
+    real_jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(
+        runtime_config.app_db_path,
+        sqlite_pool,
+    )
+    session_repository = SqliteSessionRepository(
+        runtime_config.app_db_path,
+        runtime_config.encrypt_key,
+        sqlite_pool,
+    )
     flask_app.session_interface = SqliteSessionInterface(runtime_config, session_repository)
 
     http_client = HttpClient()
