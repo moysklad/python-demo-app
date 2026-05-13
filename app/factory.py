@@ -113,12 +113,11 @@ def _register_request_logging(app: Flask) -> None:
     @app.before_request
     def log_request_started() -> None:
         g.started_at = time.time()
-        should_log_body = request.path.startswith("/vendor-endpoint")
-        body = request.get_json(silent=True) if should_log_body else None
+        body = request.get_json(silent=True)
         request_line = f"{request.method} {request.path}"
-        log_message = "HTTP request started %s queryKeys=%s"
-        log_args = [request_line, list(request.args.keys())]
-        if should_log_body and body is not None:
+        log_message = "HTTP request started %s queryKeys=%s\nheaders=%s"
+        log_args = [request_line, list(request.args.keys()), dict(request.headers)]
+        if body is not None:
             log_message += "\n\n%s"
             log_args.append(body)
 
@@ -127,11 +126,18 @@ def _register_request_logging(app: Flask) -> None:
     @app.after_request
     def log_request_completed(response):
         started_at = getattr(g, "started_at", time.time())
+        body = response.get_json(silent=True)
         request_line = f"{request.method} {request.path}"
-        logger.debug(
-            "HTTP request completed %s status=%s durationMs=%s",
+        log_message = "HTTP request completed %s status=%s durationMs=%s\nheaders=%s"
+        log_args = [
             request_line,
             response.status_code,
             int((time.time() - started_at) * 1000),
-        )
+            dict(response.headers),
+        ]
+        if body is not None:
+            log_message += "\n\n%s"
+            log_args.append(body)
+
+        logger.debug(log_message, *log_args)
         return response
