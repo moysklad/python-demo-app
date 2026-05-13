@@ -16,7 +16,7 @@ class CountingSessionRepository:
         self.delete_calls = 0
 
     def load(self, sid):
-        return {"userContext": {"active": None}}
+        return {}
 
     def save(self, sid, session_data, expires_at_ms):
         self.save_calls += 1

@@ -12,7 +12,6 @@ from app.integrations.vendor_api import VendorApi
 # contextKey нужен только для начальной загрузки entry-страницы из МоегоСклада, а дальше
 # backend-подзапросы авторизуются через contextNonce, привязанный к server-side session.
 USER_CONTEXT_SESSION_KEY = "userContext"
-ACTIVE_USER_CONTEXT_SESSION_KEY = "active"
 USER_CONTEXT_SESSION_TTL_SECONDS = 7200
 
 
@@ -107,23 +106,6 @@ def check_is_admin(employee: dict[str, Any] | None) -> bool:
     return normalize_is_admin(view)
 
 
-def user_context_session_bucket(session_data: MutableMapping[str, Any]) -> dict[str, Any]:
-    current = session_data.get(USER_CONTEXT_SESSION_KEY)
-    if not isinstance(current, dict):
-        current = {}
-        session_data[USER_CONTEXT_SESSION_KEY] = current
-        return current
-
-    active = current.get(ACTIVE_USER_CONTEXT_SESSION_KEY)
-    # Миграция старой схемы демо: раньше в сессии мог храниться список contextKey.
-    # Сейчас оставляем только один active context без исходного opaque-token.
-    if set(current.keys()) - {ACTIVE_USER_CONTEXT_SESSION_KEY}:
-        current = {ACTIVE_USER_CONTEXT_SESSION_KEY: active} if active is not None else {}
-        session_data[USER_CONTEXT_SESSION_KEY] = current
-
-    return current
-
-
 def save_active_user_context_to_session(
     session_data: MutableMapping[str, Any],
     *,
@@ -132,8 +114,7 @@ def save_active_user_context_to_session(
     account_id: str,
     is_admin: bool,
 ) -> UserContextSessionEntry:
-    bucket = user_context_session_bucket(session_data)
-    previous = _normalize_user_context_session_entry(bucket.get(ACTIVE_USER_CONTEXT_SESSION_KEY))
+    previous = _normalize_user_context_session_entry(session_data.get(USER_CONTEXT_SESSION_KEY))
     normalized_uid = uid.strip()
     normalized_account_id = account_id.strip()
     now = int(time.time() * 1000)
@@ -157,16 +138,14 @@ def save_active_user_context_to_session(
         created_at=created_at,
         expires_at=now + USER_CONTEXT_SESSION_TTL_SECONDS * 1000,
     )
-    bucket[ACTIVE_USER_CONTEXT_SESSION_KEY] = _to_session_dict(context)
+    session_data[USER_CONTEXT_SESSION_KEY] = _to_session_dict(context)
     return context
 
 
 def load_active_user_context_from_session(session_data: MutableMapping[str, Any]) -> UserContextSessionEntry | None:
-    current = user_context_session_bucket(session_data)
-
-    context = _normalize_user_context_session_entry(current.get(ACTIVE_USER_CONTEXT_SESSION_KEY))
+    context = _normalize_user_context_session_entry(session_data.get(USER_CONTEXT_SESSION_KEY))
     if not context:
-        current.pop(ACTIVE_USER_CONTEXT_SESSION_KEY, None)
+        session_data.pop(USER_CONTEXT_SESSION_KEY, None)
         return None
 
     now = int(time.time() * 1000)
@@ -181,7 +160,7 @@ def load_active_user_context_from_session(session_data: MutableMapping[str, Any]
         created_at=context.created_at,
         expires_at=now + USER_CONTEXT_SESSION_TTL_SECONDS * 1000,
     )
-    current[ACTIVE_USER_CONTEXT_SESSION_KEY] = _to_session_dict(refreshed)
+    session_data[USER_CONTEXT_SESSION_KEY] = _to_session_dict(refreshed)
     return refreshed
 
 

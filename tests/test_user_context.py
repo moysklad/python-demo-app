@@ -17,7 +17,7 @@ def test_check_is_admin_accepts_all_permission():
 
 def test_active_context_does_not_store_raw_context_key(monkeypatch):
     monkeypatch.setattr("app.services.user_context.secrets.token_urlsafe", lambda _: "nonce-1")
-    session = {"userContext": {"byContextKey": {"context-key": {}}, "contextKeyStack": ["context-key"]}}
+    session = {}
 
     context = save_active_user_context_to_session(
         session,
@@ -27,12 +27,10 @@ def test_active_context_does_not_store_raw_context_key(monkeypatch):
         is_admin=True,
     )
 
-    active = session["userContext"]["active"]
+    active = session["userContext"]
     assert context.context_nonce == "nonce-1"
     assert active["contextNonce"] == "nonce-1"
     assert "contextKey" not in active
-    assert "byContextKey" not in session["userContext"]
-    assert "contextKeyStack" not in session["userContext"]
 
 
 def test_load_for_entry_reuses_nonce_for_same_backend_identity(monkeypatch):
@@ -91,17 +89,15 @@ def test_resolve_backend_context_requires_active_nonce(monkeypatch):
 def test_expired_active_context_is_removed_from_session():
     session = {
         "userContext": {
-            "active": {
-                "uid": "user-1",
-                "fio": "",
-                "accountId": "account-1",
-                "isAdmin": True,
-                "contextNonce": "nonce-1",
-                "createdAt": 1,
-                "expiresAt": 1,
-            }
+            "uid": "user-1",
+            "fio": "",
+            "accountId": "account-1",
+            "isAdmin": True,
+            "contextNonce": "nonce-1",
+            "createdAt": 1,
+            "expiresAt": 1,
         }
     }
 
     assert load_active_user_context_from_session(session) is None
-    assert "active" not in session["userContext"]
+    assert "userContext" not in session
