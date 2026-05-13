@@ -46,6 +46,22 @@ def test_sensitive_data_filter_redacts_context_key_in_strings():
     assert "appUid=python-demo-app.moysklad" in record.msg
 
 
+def test_sensitive_data_filter_redacts_context_nonce_in_strings():
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        "GET /utils/get-object?entity=customerorder&contextNonce=nonce-123&objectId=obj-1",
+        (),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert "contextNonce=<redacted>" in record.msg
+    assert "objectId=obj-1" in record.msg
+
+
 def test_sensitive_data_filter_redacts_access_token_in_payload():
     record = logging.LogRecord(
         "app.http",
@@ -60,3 +76,19 @@ def test_sensitive_data_filter_redacts_access_token_in_payload():
     assert SensitiveDataFilter().filter(record) is True
     assert record.args["access_token"] == "<redacted>"
     assert record.args["nested"]["access_token"] == "<redacted>"
+
+
+def test_sensitive_data_filter_redacts_context_nonce_in_payload():
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        "Request %s",
+        ({"contextNonce": "nonce-123", "nested": {"context_nonce": "nonce-456"}},),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert record.args["contextNonce"] == "<redacted>"
+    assert record.args["nested"]["context_nonce"] == "<redacted>"
