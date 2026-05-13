@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,12 +9,11 @@ from flask import Flask, g, request
 from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-from app.config import AppConfig, load_config
+from app.config import AppConfig, configure_logging, load_config
 from app.domain.app_instance import AppInstanceRepository
 from app.integrations.http_client import HttpClient
 from app.integrations.json_api import JsonApiFactory
 from app.integrations.vendor_api import VendorApi
-from app.logging import configure_logging, log_message
 from app.repositories.sqlite import SqliteAppInstanceRepository, SqliteJwtReplayRepository, SqliteSessionRepository
 from app.security.crypto import ensure_private_dir
 from app.security.jwt_tools import JwtReplayRepository
@@ -23,6 +23,9 @@ from app.services.utils import UtilsService
 from app.services.vendor_endpoint import VendorEndpointService
 from app.web.routes import register_routes
 from app.web.session import SqliteSessionInterface
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -92,14 +95,15 @@ def create_app(
     )
     flask_app.config["APP_SERVICES"] = services
 
-    _register_request_logging(flask_app)
     register_routes(flask_app, services)
+    if runtime_config.log_level == "DEBUG":
+        _register_request_logging(flask_app)
 
     @flask_app.errorhandler(Exception)
     def handle_error(error: Exception):
         if isinstance(error, HTTPException):
             return error
-        log_message("ERROR", str(error))
+        logger.error("%s", error)
         return "Internal Server Error", 500
 
     return flask_app
@@ -111,30 +115,23 @@ def _register_request_logging(app: Flask) -> None:
         g.started_at = time.time()
         should_log_body = request.path.startswith("/vendor-endpoint")
         body = request.get_json(silent=True) if should_log_body else None
-        log_message(
-            "DEBUG",
-            "HTTP request started",
-            {
-                "method": request.method,
-                "path": request.path,
-                "queryKeys": list(request.args.keys()),
-                "headers": dict(request.headers),
-                **({"body": body} if should_log_body else {}),
-            },
-        )
+        request_line = f"{request.method} {request.path}"
+        log_message = "HTTP request started %s queryKeys=%s"
+        log_args = [request_line, list(request.args.keys())]
+        if should_log_body and body is not None:
+            log_message += "\n\n%s"
+            log_args.append(body)
+
+        logger.debug(log_message, *log_args)
 
     @app.after_request
     def log_request_completed(response):
         started_at = getattr(g, "started_at", time.time())
-        log_message(
-            "DEBUG",
-            "HTTP request completed",
-            {
-                "method": request.method,
-                "path": request.path,
-                "queryKeys": list(request.args.keys()),
-                "statusCode": response.status_code,
-                "durationMs": int((time.time() - started_at) * 1000),
-            },
+        request_line = f"{request.method} {request.path}"
+        logger.debug(
+            "HTTP request completed %s status=%s durationMs=%s",
+            request_line,
+            response.status_code,
+            int((time.time() - started_at) * 1000),
         )
         return response

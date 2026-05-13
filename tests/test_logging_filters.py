@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+import logging
+
+from app.logging_filters import SensitiveDataFilter
+
+
+def test_sensitive_data_filter_redacts_sensitive_mappings_without_mutating_original():
+    original_headers = {
+        "Authorization": "Bearer token",
+        "Accept-Encoding": "gzip",
+        "Nested": {"Set-Cookie": "session=secret", "name": "ok"},
+        "items": [{"x-api-key": "key-1", "label": "first"}],
+    }
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        "Request %s",
+        (original_headers,),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert record.args["Authorization"] == "<redacted>"
+    assert record.args["Nested"]["Set-Cookie"] == "<redacted>"
+    assert record.args["items"][0]["x-api-key"] == "<redacted>"
+    assert original_headers["Authorization"] == "Bearer token"
+    assert original_headers["Nested"]["Set-Cookie"] == "session=secret"
+
+
+def test_sensitive_data_filter_redacts_context_key_in_strings():
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        "GET /entry/iframe?contextKey=de263ebd5e1dc05d96a97590eee5190d78a4aa05&appUid=python-demo-app.moysklad",
+        (),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert "contextKey=<redacted>" in record.msg
+    assert "appUid=python-demo-app.moysklad" in record.msg
+
+
+def test_sensitive_data_filter_redacts_access_token_in_payload():
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        "Request %s",
+        ({"access_token": "token-123", "nested": {"access_token": "token-456"}},),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert record.args["access_token"] == "<redacted>"
+    assert record.args["nested"]["access_token"] == "<redacted>"

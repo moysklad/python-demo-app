@@ -18,7 +18,6 @@ class JsonApi:
             f"{self._config.moysklad_json_api_endpoint_url}/entity/store",
             self._access_token,
             service_name="json-api",
-            retryable=True,
         )
 
     def store_names(self) -> list[str]:
@@ -34,7 +33,6 @@ class JsonApi:
             f"{self._config.moysklad_json_api_endpoint_url}/entity/{entity}/{object_id}",
             self._access_token,
             service_name="json-api",
-            retryable=True,
         )
 
 

@@ -2,15 +2,29 @@ from __future__ import annotations
 
 import os
 import re
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
 
 from dotenv import load_dotenv
 
+from app.logging_filters import SensitiveDataFilter
+
 
 LOG_LEVELS = {"DEBUG", "INFO", "WARN", "ERROR"}
 SAME_SITE_VALUES = {"lax", "strict", "none"}
+
+
+def configure_logging(level: str) -> None:
+    logging.basicConfig(
+        level=_log_level_value(level),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        force=True,
+    )
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(SensitiveDataFilter())
 
 
 @dataclass(frozen=True)
@@ -127,6 +141,17 @@ def _bool_value(env: Mapping[str, str], key: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() == "true"
+
+
+def _log_level_value(level: str) -> int:
+    normalized = level.upper()
+    if normalized == "INFO":
+        return logging.INFO
+    if normalized == "WARN":
+        return logging.WARNING
+    if normalized == "ERROR":
+        return logging.ERROR
+    return logging.DEBUG
 
 
 def _resolve_path(cwd: Path, value: str) -> Path:

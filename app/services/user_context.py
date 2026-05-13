@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import asdict, dataclass
 from typing import Any, MutableMapping
 
 from app.integrations.vendor_api import VendorApi
-from app.logging import log_message
+
+
+logger = logging.getLogger(__name__)
 
 
 USER_CONTEXT_SESSION_KEY = "userContext"
@@ -41,11 +44,11 @@ class UserContextService:
 
         cached_context = load_user_context_from_session(session_data, context_key)
         if cached_context:
-            log_message("DEBUG", "Loaded user context from session")
+            logger.debug("Loaded user context from session")
             return cached_context
 
-        log_message("DEBUG", "Loading user context from Vendor API")
-        employee = self._vendor_api.context(context_key)
+        logger.debug("Loading user context from Vendor API")
+        employee = self._vendor_api.get_context(context_key)
         if not employee or not employee.get("accountId") or not employee.get("uid"):
             return None
 

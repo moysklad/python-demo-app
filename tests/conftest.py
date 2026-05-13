@@ -36,12 +36,12 @@ class FakeVendorApi:
             "permissions": {"admin": {"view": "ALL"}},
         }
         self.status_updates: list[tuple[str, str, str]] = []
-        self.update_status_result: dict[str, Any] | None = {}
+        self.update_status_result = True
 
     def context(self, context_key: str) -> dict[str, Any] | None:
         return self.context_response
 
-    def update_app_status(self, app_id: str, account_id: str, status: str) -> dict[str, Any] | None:
+    def update_app_status(self, app_id: str, account_id: str, status: str) -> bool:
         self.status_updates.append((app_id, account_id, status))
         return self.update_status_result
 

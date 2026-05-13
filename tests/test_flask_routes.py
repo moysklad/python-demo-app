@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
+import app.factory as factory_module
 from app.factory import create_app
 from app.repositories.memory import MemoryAppInstanceRepository, MemoryJwtReplayRepository
 
@@ -93,3 +96,51 @@ def test_static_assets_do_not_resave_loaded_session(app_config):
     assert response.status_code == 200
     assert session_repository.save_calls == 0
     assert session_repository.delete_calls == 0
+
+
+def test_request_logging_is_not_registered_for_non_debug_level(app_config, monkeypatch):
+    app_config = replace(app_config, log_level="INFO")
+    called = False
+
+    def fake_register_request_logging(app):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("app.factory._register_request_logging", fake_register_request_logging)
+
+    create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+
+    assert called is False
+
+
+def test_vendor_request_log_writes_body_after_blank_line(app_config, monkeypatch):
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    captured: list[tuple[str, tuple[object, ...]]] = []
+
+    def fake_debug(message: str, *args: object) -> None:
+        captured.append((message, args))
+
+    monkeypatch.setattr(factory_module.logger, "debug", fake_debug)
+
+    response = app.test_client().put(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        json={"cause": "Install"},
+    )
+
+    assert response.status_code == 401
+    assert captured
+    assert "body=" not in captured[0][0]
+    assert captured[0][0].endswith("\n\n%s")
+    assert captured[0][1][-1] == {"cause": "Install"}
