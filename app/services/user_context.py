@@ -81,14 +81,6 @@ class UserContextService:
         return ResolvedBackendAuthContext(account_id=account_id, uid=uid, is_admin=context.is_admin)
 
 
-def get_context_key(query_value: Any = None, body_value: Any = None) -> str | None:
-    return _trimmed_string(body_value if body_value is not None else query_value)
-
-
-def get_context_nonce(query_value: Any = None, body_value: Any = None) -> str | None:
-    return _trimmed_string(body_value if body_value is not None else query_value)
-
-
 def normalize_is_admin(raw_is_admin: Any) -> bool:
     if isinstance(raw_is_admin, bool):
         return raw_is_admin
@@ -207,9 +199,3 @@ def _to_session_dict(context: UserContextSessionEntry) -> dict[str, Any]:
         "expiresAt": data["expires_at"],
     }
 
-
-def _trimmed_string(value: Any = None) -> str | None:
-    if not isinstance(value, str):
-        return None
-    trimmed = value.strip()
-    return trimmed or None
