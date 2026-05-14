@@ -163,8 +163,16 @@
     maybeAutoOpenFeedback(message);
 
     if (objectEl && getObjectUrl && message && message.objectId) {
-      fetch(`${getObjectUrl}${encodeURIComponent(message.objectId)}`, {
-        credentials: "same-origin"
+      fetch(getObjectUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contextNonce: root.dataset.contextNonce || "",
+          objectId: message.objectId
+        })
       })
         .then(async (response) => {
           const text = await response.text();

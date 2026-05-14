@@ -170,6 +170,15 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     assert 'name="contextKey"' not in html
     assert match is not None
 
+    widget_response = client.get("/entry/widget-customerorder?contextKey=context-key-1")
+    widget_html = widget_response.get_data(as_text=True)
+    widget_match = re.search(r'data-get-object-url="([^"]+)"', widget_html)
+
+    assert widget_response.status_code == 200
+    assert widget_match is not None
+    assert "contextNonce=" not in widget_match.group(1)
+    assert 'data-context-nonce="' in widget_html
+
     update_response = client.post(
         "/utils/update-settings",
         data={"contextNonce": match.group(1), "infoMessage": "hello", "store": "Основной склад"},
@@ -177,6 +186,14 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
 
     assert update_response.status_code == 200
     assert app_repository.load(app_config.app_id, "account-1").store == "Основной склад"
+
+    object_response = client.post(
+        "/utils/get-object?entity=customerorder",
+        json={"contextNonce": match.group(1), "objectId": "object-1"},
+    )
+
+    assert object_response.status_code == 200
+    assert object_response.get_data(as_text=True) == "Заказ покупателя Документ"
 
 
 def test_backend_context_rejects_context_key_after_bootstrap(app_config):

@@ -41,9 +41,7 @@ class EntryService:
             "uid": context.uid,
             "fio": context.fio,
             "context_nonce": context.context_nonce,
-            # URL для AJAX-запроса содержит contextNonce, а objectId добавляется
-            # на фронтенде после события Open от Widget SDK.
-            "get_object_url": f"/utils/get-object?entity={quote(entity, safe='')}&contextNonce={quote(context.context_nonce, safe='')}&objectId=",
+            "get_object_url": f"/utils/get-object?entity={quote(entity, safe='')}",
         }
 
     def _load_app(self, account_id: str) -> AppInstance:
