@@ -5,9 +5,9 @@ from dataclasses import replace
 
 import app.factory as factory_module
 from app.factory import create_app
-from app.repositories.memory import MemoryAppInstanceRepository, MemoryJwtReplayRepository
 
 from tests.conftest import FakeJsonApiFactory, FakeVendorApi, vendor_auth_header
+from tests.memory_repositories import MemoryAppInstanceRepository, MemoryJwtReplayRepository
 
 
 class CountingSessionRepository:
