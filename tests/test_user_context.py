@@ -12,7 +12,7 @@ from tests.conftest import FakeVendorApi
 
 def test_check_is_admin_accepts_all_permission():
     assert check_is_admin({"permissions": {"admin": {"view": "ALL"}}}) is True
-    assert check_is_admin({"permissions": {"admin": {"view": "OWN"}}}) is False
+    assert check_is_admin({"permissions": {"admin": {"view": "NO"}}}) is False
 
 
 def test_active_context_does_not_store_raw_context_key(monkeypatch):
@@ -84,6 +84,47 @@ def test_resolve_backend_context_requires_active_nonce(monkeypatch):
     assert resolved.uid == "user-1"
     assert service.resolve_backend_context(session, "old-nonce") is None
     assert service.resolve_backend_context(session, None) is None
+
+
+def test_resolve_backend_context_does_not_refresh_ttl_for_invalid_nonce(monkeypatch):
+    monkeypatch.setattr("app.services.user_context.time.time", lambda: 1000.0)
+    service = UserContextService(FakeVendorApi())
+    session = {
+        "userContext": {
+            "uid": "user-1",
+            "fio": "Иванов И.",
+            "accountId": "account-1",
+            "isAdmin": True,
+            "contextNonce": "nonce-1",
+            "createdAt": 1000000,
+            "expiresAt": 2000000,
+        }
+    }
+
+    assert service.resolve_backend_context(session, "wrong-nonce") is None
+    assert session["userContext"]["expiresAt"] == 2000000
+
+
+def test_resolve_backend_context_refreshes_ttl_for_valid_nonce(monkeypatch):
+    monkeypatch.setattr("app.services.user_context.time.time", lambda: 1000.0)
+    service = UserContextService(FakeVendorApi())
+    session = {
+        "userContext": {
+            "uid": "user-1",
+            "fio": "Иванов И.",
+            "accountId": "account-1",
+            "isAdmin": True,
+            "contextNonce": "nonce-1",
+            "createdAt": 1000000,
+            "expiresAt": 2000000,
+        }
+    }
+
+    resolved = service.resolve_backend_context(session, "nonce-1")
+
+    assert resolved is not None
+    assert resolved.uid == "user-1"
+    assert session["userContext"]["expiresAt"] == 8200000
 
 
 def test_expired_active_context_is_removed_from_session():

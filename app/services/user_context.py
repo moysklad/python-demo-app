@@ -73,6 +73,8 @@ class UserContextService:
         if not context or context.context_nonce != normalized_nonce:
             return None
 
+        refresh_active_user_context_in_session(session_data, context)
+
         account_id = context.account_id.strip()
         uid = context.uid.strip()
         if account_id == "" or uid == "":
@@ -113,7 +115,7 @@ def save_active_user_context_to_session(
 
     # contextNonce стабилен для того же uid/accountId/isAdmin, чтобы повторное
     # открытие iframe не ломало уже отрисованную страницу. При смене пользователя,
-    # аккаунта или уровня прав nonce ротируется, а старые формы получают 401.
+    # аккаунта или уровня прав contextNonce обновляется, а старые страницы получают 401.
     if previous and _same_backend_identity(previous, normalized_uid, normalized_account_id, is_admin):
         context_nonce = previous.context_nonce
         created_at = previous.created_at
@@ -134,15 +136,24 @@ def save_active_user_context_to_session(
     return context
 
 
-def load_active_user_context_from_session(session_data: MutableMapping[str, Any]) -> UserContextSessionEntry | None:
+def load_active_user_context_from_session(
+    session_data: MutableMapping[str, Any],
+) -> UserContextSessionEntry | None:
     context = _normalize_user_context_session_entry(session_data.get(USER_CONTEXT_SESSION_KEY))
     if not context:
         session_data.pop(USER_CONTEXT_SESSION_KEY, None)
         return None
 
+    return context
+
+
+def refresh_active_user_context_in_session(
+    session_data: MutableMapping[str, Any],
+    context: UserContextSessionEntry,
+):
     now = int(time.time() * 1000)
-    # TTL скользящий: пока iframe/виджет делает backend-запросы, активный контекст
-    # продлевается. Истекший контекст удаляется и требует повторного открытия страницы.
+    # TTL скользящий: он обновляется только после успешной проверки nonce,
+    # чтобы не продлевать контекст на неавторизованных запросах.
     refreshed = UserContextSessionEntry(
         uid=context.uid,
         fio=context.fio,
@@ -153,7 +164,6 @@ def load_active_user_context_from_session(session_data: MutableMapping[str, Any]
         expires_at=now + USER_CONTEXT_SESSION_TTL_SECONDS * 1000,
     )
     session_data[USER_CONTEXT_SESSION_KEY] = _to_session_dict(refreshed)
-    return refreshed
 
 
 def _normalize_user_context_session_entry(value: Any) -> UserContextSessionEntry | None:
@@ -198,4 +208,3 @@ def _to_session_dict(context: UserContextSessionEntry) -> dict[str, Any]:
         "createdAt": data["created_at"],
         "expiresAt": data["expires_at"],
     }
-
