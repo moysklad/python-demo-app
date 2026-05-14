@@ -27,7 +27,7 @@ class EntryService:
             "access_level": "администратор аккаунта" if context.is_admin else "простой пользователь",
             "uid": context.uid,
             "fio": context.fio,
-            "context_key": context.context_key,
+            "context_nonce": context.context_nonce,
             "info_message": app.info_message,
             "store": app.store,
             "status_class": "status-required" if is_settings_required else "status-ready",
@@ -40,8 +40,10 @@ class EntryService:
         return {
             "uid": context.uid,
             "fio": context.fio,
-            "context_key": context.context_key,
-            "get_object_url": f"/utils/get-object?entity={quote(entity, safe='')}&contextKey={quote(context.context_key, safe='')}&objectId=",
+            "context_nonce": context.context_nonce,
+            # URL для AJAX-запроса содержит contextNonce, а objectId добавляется
+            # на фронтенде после события Open от Widget SDK.
+            "get_object_url": f"/utils/get-object?entity={quote(entity, safe='')}&contextNonce={quote(context.context_nonce, safe='')}&objectId=",
         }
 
     def _load_app(self, account_id: str) -> AppInstance:

@@ -38,7 +38,7 @@ class FakeVendorApi:
         self.status_updates: list[tuple[str, str, str]] = []
         self.update_status_result = True
 
-    def context(self, context_key: str) -> dict[str, Any] | None:
+    def get_context(self, context_key: str) -> dict[str, Any] | None:
         return self.context_response
 
     def update_app_status(self, app_id: str, account_id: str, status: str) -> bool:
