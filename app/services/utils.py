@@ -30,10 +30,10 @@ class UtilsService:
         self._vendor_api = vendor_api
         self._json_api_factory = json_api_factory
 
-    def update_settings(self, session_data: dict[str, Any], context_key: str | None, info_message: str, store: str) -> ServiceResponse:
-        auth_context = self._user_context_service.resolve_backend_context(session_data, context_key)
+    def update_settings(self, session_data: dict[str, Any], context_nonce: str | None, info_message: str, store: str) -> ServiceResponse:
+        auth_context = self._user_context_service.resolve_backend_context(session_data, context_nonce)
         if not auth_context:
-            return ServiceResponse(status_code=401, text_body="Ошибка авторизации: передайте contextKey и откройте iframe заново.")
+            return ServiceResponse(status_code=401, text_body="Ошибка авторизации: откройте iframe заново.")
 
         if not auth_context.is_admin:
             return ServiceResponse(status_code=403, text_body="Недостаточно прав")
@@ -54,10 +54,10 @@ class UtilsService:
         self._app_repository.save(app)
         return ServiceResponse(text_body="Настройки обновлены, перезагрузите решение")
 
-    def get_object(self, session_data: dict[str, Any], context_key: str | None, entity: str, object_id: str) -> ServiceResponse:
-        auth_context = self._user_context_service.resolve_backend_context(session_data, context_key)
+    def get_object(self, session_data: dict[str, Any], context_nonce: str | None, entity: str, object_id: str) -> ServiceResponse:
+        auth_context = self._user_context_service.resolve_backend_context(session_data, context_nonce)
         if not auth_context:
-            return ServiceResponse(status_code=401, text_body="Ошибка авторизации: передайте contextKey и откройте iframe/виджет заново.")
+            return ServiceResponse(status_code=401, text_body="Ошибка авторизации: откройте iframe/виджет заново.")
 
         if not is_supported_entity(entity):
             return ServiceResponse(status_code=400, text_body="Неподдерживаемая сущность")

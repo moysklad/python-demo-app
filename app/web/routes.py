@@ -8,7 +8,6 @@ from flask import Flask, jsonify, render_template, request, session
 from app.domain.entities import is_supported_entity
 from app.security.jwt_tools import auth_token_is_valid
 from app.services.common import ServiceResponse
-from app.services.user_context import get_context_key
 
 
 def register_routes(app: Flask, services: Any) -> None:
@@ -24,7 +23,10 @@ def register_routes(app: Flask, services: Any) -> None:
 
     @app.get("/entry/iframe")
     def iframe():
-        context_key = get_context_key(query_value=request.args.get("contextKey"))
+        # Entry routes - единственное место, где приложение принимает contextKey
+        # из URL хост-окна. После загрузки страницы contextKey заменяется на
+        # contextNonce, который проверяется только вместе с server-side session.
+        context_key = _trimmed_string(request.args.get("contextKey"))
         if context_key is None:
             return "Ошибка авторизации: параметр contextKey обязателен", 401
 
@@ -49,23 +51,25 @@ def register_routes(app: Flask, services: Any) -> None:
     @app.post("/utils/update-settings")
     def update_settings():
         body = _request_body()
-        context_key = get_context_key(query_value=request.args.get("contextKey"), body_value=body.get("contextKey"))
+        context_nonce = _trimmed_string(body.get("contextNonce"))
         response = services.utils_service.update_settings(
             session,
-            context_key,
+            context_nonce,
             str(body.get("infoMessage", "") or ""),
             str(body.get("store", "") or ""),
         )
         return _service_response(response)
 
     @app.get("/utils/get-object")
+    @app.post("/utils/get-object")
     def get_object():
-        context_key = get_context_key(query_value=request.args.get("contextKey"))
+        body = _request_body()
+        context_nonce = _trimmed_string(body.get("contextNonce"))
         response = services.utils_service.get_object(
             session,
-            context_key,
+            context_nonce,
             str(request.args.get("entity", "") or ""),
-            str(request.args.get("objectId", "") or ""),
+            str(body.get("objectId", request.args.get("objectId", "")) or ""),
         )
         return _service_response(response)
 
@@ -103,7 +107,7 @@ def _render_widget(services: Any, entity: str):
     if not is_supported_entity(entity):
         return "Неподдерживаемая сущность", 400
 
-    context_key = get_context_key(query_value=request.args.get("contextKey"))
+    context_key = _trimmed_string(request.args.get("contextKey"))
     if context_key is None:
         return "Ошибка авторизации: параметр contextKey обязателен", 401
 
@@ -135,3 +139,10 @@ def _request_body() -> dict[str, Any]:
         body = request.get_json(silent=True)
         return body if isinstance(body, dict) else {}
     return dict(request.form.items())
+
+
+def _trimmed_string(value: Any = None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    return trimmed or None

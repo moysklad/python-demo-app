@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 
 import app.factory as factory_module
@@ -15,7 +16,7 @@ class CountingSessionRepository:
         self.delete_calls = 0
 
     def load(self, sid):
-        return {"userContext": {"byContextKey": {}, "contextKeyStack": []}}
+        return {}
 
     def save(self, sid, session_data, expires_at_ms):
         self.save_calls += 1
@@ -142,5 +143,73 @@ def test_vendor_request_log_writes_body_after_blank_line(app_config, monkeypatch
     assert response.status_code == 401
     assert captured
     assert "body=" not in captured[0][0]
-    assert captured[0][0].endswith("\n\n%s")
+    assert captured[0][0].endswith("\nheaders=%s\n\n%s")
+    assert "Content-Type" in captured[0][1][2]
     assert captured[0][1][-1] == {"cause": "Install"}
+    assert captured[-1][0].endswith("\nheaders=%s")
+    assert "Content-Type" in captured[-1][1][-1]
+
+
+def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    html = entry_response.get_data(as_text=True)
+    match = re.search(r'name="contextNonce" value="([^"]+)"', html)
+
+    assert entry_response.status_code == 200
+    assert "context-key-1" not in html
+    assert 'name="contextKey"' not in html
+    assert match is not None
+
+    widget_response = client.get("/entry/widget-customerorder?contextKey=context-key-1")
+    widget_html = widget_response.get_data(as_text=True)
+    widget_match = re.search(r'data-get-object-url="([^"]+)"', widget_html)
+
+    assert widget_response.status_code == 200
+    assert widget_match is not None
+    assert "contextNonce=" not in widget_match.group(1)
+    assert 'data-context-nonce="' in widget_html
+
+    update_response = client.post(
+        "/utils/update-settings",
+        data={"contextNonce": match.group(1), "infoMessage": "hello", "store": "Основной склад"},
+    )
+
+    assert update_response.status_code == 200
+    assert app_repository.load(app_config.app_id, "account-1").store == "Основной склад"
+
+    object_response = client.post(
+        "/utils/get-object?entity=customerorder",
+        json={"contextNonce": match.group(1), "objectId": "object-1"},
+    )
+
+    assert object_response.status_code == 200
+    assert object_response.get_data(as_text=True) == "Заказ покупателя Документ"
+
+
+def test_backend_context_rejects_context_key_after_bootstrap(app_config):
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    assert client.get("/entry/iframe?contextKey=context-key-1").status_code == 200
+    response = client.post(
+        "/utils/update-settings",
+        data={"contextKey": "context-key-1", "infoMessage": "hello", "store": "Основной склад"},
+    )
+
+    assert response.status_code == 401

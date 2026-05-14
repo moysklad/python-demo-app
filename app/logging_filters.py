@@ -14,6 +14,8 @@ SENSITIVE_FIELD_NAMES = {
     "x-api-key",
     "x-auth-token",
     "access_token",
+    "contextnonce",
+    "context_nonce",
 }
 SENSITIVE_FIELD_SUBSTRINGS = {
     "token",
@@ -23,7 +25,7 @@ SENSITIVE_FIELD_SUBSTRINGS = {
     "pwd",
     "access_token",
 }
-CONTEXT_KEY_QUERY_PARAM_RE = re.compile(r"(?i)(contextKey=)([^&\s]+)")
+SENSITIVE_QUERY_PARAM_RE = re.compile(r"(?i)((?:contextKey|contextNonce)=)([^&\s]+)")
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -66,4 +68,4 @@ def _is_sensitive_name(name: str) -> bool:
 
 
 def _redact_string(value: str) -> str:
-    return CONTEXT_KEY_QUERY_PARAM_RE.sub(r"\1<redacted>", value)
+    return SENSITIVE_QUERY_PARAM_RE.sub(r"\1<redacted>", value)
