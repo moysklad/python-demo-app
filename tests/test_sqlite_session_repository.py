@@ -4,7 +4,14 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from app.domain.app_instance import AppInstance, AppStatus
-from app.repositories.sqlite import SqliteAppInstanceRepository, SqliteJwtReplayRepository, SqliteSessionRepository
+from app.repositories.models import SessionRow
+from app.repositories.sqlite import (
+    SqliteAppInstanceRepository,
+    SqliteJwtReplayRepository,
+    SqliteSessionRepository,
+    create_sqlite_engine,
+    create_sqlite_session_factory,
+)
 
 
 def test_sqlite_session_repository_supports_parallel_saves(app_config):
@@ -56,13 +63,19 @@ def test_sqlite_jwt_replay_repository_rejects_duplicate_jti(app_config):
     repository = SqliteJwtReplayRepository(app_config.app_db_path)
     expires_at = int(time.time()) + 60
 
+    # Первый jti сохраняется, а повторная регистрация того же jti считается replay.
     assert repository.register("jti-1", expires_at) is True
     assert repository.register("jti-1", expires_at) is False
 
 
 def test_sqlite_session_repository_deletes_expired_session_on_load(app_config):
-    repository = SqliteSessionRepository(app_config.app_db_path, app_config.encrypt_key)
+    engine = create_sqlite_engine(app_config.app_db_path)
+    session_factory = create_sqlite_session_factory(engine)
+    repository = SqliteSessionRepository(app_config.app_db_path, app_config.encrypt_key, session_factory)
     repository.save("sid-1", {"value": "expired"}, int(time.time() * 1000) - 1)
 
+    # load() не должен возвращать истекшую сессию
     assert repository.load("sid-1") is None
-    assert repository.load("sid-1") is None
+    with session_factory() as session:
+        # и load() должен удалить устаревшую строку из хранилища
+        assert session.get(SessionRow, "sid-1") is None
