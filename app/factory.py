@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import logging
 import time
 from dataclasses import dataclass
@@ -16,9 +17,10 @@ from app.integrations.json_api import JsonApiFactory
 from app.integrations.vendor_api import VendorApi
 from app.repositories.sqlite import (
     SqliteAppInstanceRepository,
-    SqliteConnectionPool,
     SqliteJwtReplayRepository,
     SqliteSessionRepository,
+    create_sqlite_engine,
+    create_sqlite_session_factory,
 )
 from app.security.crypto import ensure_private_dir
 from app.security.jwt_tools import JwtReplayRepository
@@ -78,22 +80,25 @@ def create_app(
             x_prefix=runtime_config.trust_proxy,
         )
 
-    sqlite_pool = SqliteConnectionPool(runtime_config.app_db_path)
+    sqlite_engine = create_sqlite_engine(runtime_config.app_db_path)
+    sqlite_session_factory = create_sqlite_session_factory(sqlite_engine)
     app_repository = app_repository or SqliteAppInstanceRepository(
         runtime_config.app_db_path,
         runtime_config.encrypt_key,
-        sqlite_pool,
+        sqlite_session_factory,
     )
     jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(
         runtime_config.app_db_path,
-        sqlite_pool,
+        sqlite_session_factory,
     )
     session_repository = SqliteSessionRepository(
         runtime_config.app_db_path,
         runtime_config.encrypt_key,
-        sqlite_pool,
+        sqlite_session_factory,
     )
     flask_app.session_interface = SqliteSessionInterface(runtime_config, session_repository)
+    flask_app.extensions["sqlite_engine"] = sqlite_engine
+    atexit.register(sqlite_engine.dispose)
 
     http_client = HttpClient()
     vendor_api = vendor_api or VendorApi(runtime_config, http_client)

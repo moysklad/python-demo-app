@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
-from collections.abc import Iterator
-from contextlib import contextmanager
-from queue import Empty, LifoQueue
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
 from app.domain.app_instance import AppInstance, AppStatus
+from app.repositories.models import AccountApplicationRow, Base, JwtRow, SessionRow
 from app.security.crypto import decrypt_sensitive, encrypt_sensitive, ensure_private_dir
 
 
@@ -20,241 +22,179 @@ SQLITE_POOL_SIZE = 5
 SQLITE_CONNECTION_CHECKOUT_TIMEOUT_SECONDS = 5.0
 
 
-def connect_database(filename: Path) -> sqlite3.Connection:
+def create_sqlite_engine(filename: Path) -> Engine:
     ensure_private_dir(filename.parent)
-    connection = sqlite3.connect(filename, check_same_thread=False)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA busy_timeout=5000")
-    connection.execute("PRAGMA journal_mode=WAL")
-    return connection
+    engine = create_engine(
+        f"sqlite:///{filename}",
+        connect_args={"check_same_thread": False},
+        pool_size=SQLITE_POOL_SIZE,
+        max_overflow=0,
+        pool_timeout=SQLITE_CONNECTION_CHECKOUT_TIMEOUT_SECONDS,
+        pool_pre_ping=True,
+    )
 
-
-class SqliteConnectionPool:
-    def __init__(
-        self,
-        filename: Path,
-        size: int = SQLITE_POOL_SIZE,
-        checkout_timeout_seconds: float = SQLITE_CONNECTION_CHECKOUT_TIMEOUT_SECONDS,
-    ) -> None:
-        self._checkout_timeout_seconds = checkout_timeout_seconds
-        self._connections: LifoQueue[sqlite3.Connection] = LifoQueue(maxsize=size)
-        for _ in range(size):
-            self._connections.put(connect_database(filename))
-
-    @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
+    @event.listens_for(engine, "connect")
+    def configure_connection(dbapi_connection: Any, _: Any) -> None:
+        cursor = dbapi_connection.cursor()
         try:
-            connection = self._connections.get(timeout=self._checkout_timeout_seconds)
-        except Empty as error:
-            raise SqliteConnectionPoolExhausted("SQLite connection pool exhausted") from error
-
-        try:
-            yield connection
-        except Exception:
-            connection.rollback()
-            raise
+            cursor.execute("PRAGMA busy_timeout=5000")
+            cursor.execute("PRAGMA journal_mode=WAL")
         finally:
-            self._connections.put(connection)
+            cursor.close()
 
-    def close(self) -> None:
-        while not self._connections.empty():
-            self._connections.get_nowait().close()
+    Base.metadata.create_all(engine)
+    return engine
 
 
-class SqliteConnectionPoolExhausted(RuntimeError):
-    pass
+def create_sqlite_session_factory(engine: Engine) -> sessionmaker[Session]:
+    return sessionmaker(bind=engine, expire_on_commit=False)
 
 
 class SqliteAppInstanceRepository:
-    def __init__(self, filename: Path, encrypt_key: str, pool: SqliteConnectionPool | None = None) -> None:
-        self._pool = pool or SqliteConnectionPool(filename)
+    def __init__(
+        self,
+        filename: Path,
+        encrypt_key: str,
+        session_factory: sessionmaker[Session] | None = None,
+    ) -> None:
+        self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
         self._encrypt_key = encrypt_key
-        with self._pool.connection() as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS account_application (
-                    account_id TEXT NOT NULL,
-                    application_id TEXT NOT NULL,
-                    status INTEGER,
-                    access_token TEXT,
-                    info_message TEXT,
-                    store TEXT,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    PRIMARY KEY (account_id, application_id)
-                )
-                """
-            )
-            db.commit()
 
     def load(self, app_id: str, account_id: str) -> AppInstance | None:
-        with self._pool.connection() as db:
-            row = db.execute(
-                """
-                SELECT application_id, account_id, info_message, store, access_token, status, updated_at
-                FROM account_application
-                WHERE application_id = ? AND account_id = ?
-                LIMIT 1
-                """,
-                (app_id, account_id),
-            ).fetchone()
+        with self._session_factory() as session:
+            row = session.get(
+                AccountApplicationRow,
+                {"account_id": account_id, "application_id": app_id},
+            )
 
         if row is None:
             return None
 
         return AppInstance(
-            app_id=row["application_id"],
-            account_id=row["account_id"],
-            info_message=row["info_message"] or "",
-            store=row["store"] or "",
-            access_token=decrypt_sensitive(row["access_token"], self._encrypt_key) if row["access_token"] else "",
-            status=_known_status(row["status"]),
-            updated_at=_parse_timestamp_ms(row["updated_at"]),
+            app_id=row.application_id,
+            account_id=row.account_id,
+            info_message=row.info_message or "",
+            store=row.store or "",
+            access_token=decrypt_sensitive(row.access_token, self._encrypt_key) if row.access_token else "",
+            status=_known_status(row.status),
+            updated_at=_parse_timestamp_ms(row.updated_at),
         )
 
     def save(self, app: AppInstance) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
         access_token = _nullable(app.access_token)
-        with self._pool.connection() as db:
-            db.execute(
-                """
-                INSERT INTO account_application (
-                    account_id, application_id, status, access_token, info_message, store, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(account_id, application_id) DO UPDATE SET
-                    status = excluded.status,
-                    access_token = excluded.access_token,
-                    info_message = excluded.info_message,
-                    store = excluded.store,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    app.account_id,
-                    app.app_id,
-                    int(app.status),
-                    encrypt_sensitive(access_token, self._encrypt_key) if access_token else None,
-                    _nullable(app.info_message),
-                    _nullable(app.store),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            db.commit()
+        values = {
+            "account_id": app.account_id,
+            "application_id": app.app_id,
+            "status": int(app.status),
+            "access_token": encrypt_sensitive(access_token, self._encrypt_key) if access_token else None,
+            "info_message": _nullable(app.info_message),
+            "store": _nullable(app.store),
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        statement = insert(AccountApplicationRow).values(**values)
+        statement = statement.on_conflict_do_update(
+            index_elements=[AccountApplicationRow.account_id, AccountApplicationRow.application_id],
+            set_={
+                "status": statement.excluded.status,
+                "access_token": statement.excluded.access_token,
+                "info_message": statement.excluded.info_message,
+                "store": statement.excluded.store,
+                "updated_at": statement.excluded.updated_at,
+            },
+        )
+
+        with self._session_factory.begin() as session:
+            session.execute(statement)
 
     def delete(self, app_id: str, account_id: str) -> None:
-        with self._pool.connection() as db:
-            db.execute(
-                "DELETE FROM account_application WHERE application_id = ? AND account_id = ?",
-                (app_id, account_id),
+        with self._session_factory.begin() as session:
+            session.execute(
+                delete(AccountApplicationRow).where(
+                    AccountApplicationRow.application_id == app_id,
+                    AccountApplicationRow.account_id == account_id,
+                )
             )
-            db.commit()
 
 
 class SqliteJwtReplayRepository:
-    def __init__(self, filename: Path, pool: SqliteConnectionPool | None = None) -> None:
-        self._pool = pool or SqliteConnectionPool(filename)
+    def __init__(self, filename: Path, session_factory: sessionmaker[Session] | None = None) -> None:
+        self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
         self._last_prune_at = 0
-        with self._pool.connection() as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS jwt (
-                    jti TEXT NOT NULL,
-                    expires_at INTEGER NOT NULL,
-                    PRIMARY KEY (jti)
-                )
-                """
-            )
-            db.commit()
 
     def register(self, jti: str, exp_unix_seconds: int) -> bool:
-        with self._pool.connection() as db:
-            self._maybe_prune_expired_jti(db)
-            cursor = db.execute(
-                "INSERT OR IGNORE INTO jwt (jti, expires_at) VALUES (?, ?)",
-                (jti, exp_unix_seconds * 1000),
+        with self._session_factory.begin() as session:
+            self._maybe_prune_expired_jti(session)
+            cursor = session.execute(
+                insert(JwtRow).values(jti=jti, expires_at=exp_unix_seconds * 1000).on_conflict_do_nothing()
             )
-            db.commit()
             return cursor.rowcount == 1
 
-    def _maybe_prune_expired_jti(self, db: sqlite3.Connection) -> None:
+    def _maybe_prune_expired_jti(self, session: Session) -> None:
         now_ms = int(time.time() * 1000)
         if now_ms - self._last_prune_at < PRUNE_INTERVAL_MS:
             return
 
         self._last_prune_at = now_ms
-        db.execute(
-            "DELETE FROM jwt WHERE jti IN (SELECT jti FROM jwt WHERE expires_at <= ? LIMIT ?)",
-            (now_ms, PRUNE_MAX_ROWS_PER_RUN),
-        )
-        db.commit()
+        expired_jti = select(JwtRow.jti).where(JwtRow.expires_at <= now_ms).limit(PRUNE_MAX_ROWS_PER_RUN)
+        session.execute(delete(JwtRow).where(JwtRow.jti.in_(expired_jti)))
 
 
 class SqliteSessionRepository:
-    def __init__(self, filename: Path, encrypt_key: str, pool: SqliteConnectionPool | None = None) -> None:
-        self._pool = pool or SqliteConnectionPool(filename)
+    def __init__(
+        self,
+        filename: Path,
+        encrypt_key: str,
+        session_factory: sessionmaker[Session] | None = None,
+    ) -> None:
+        self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
         self._encrypt_key = encrypt_key
         self._last_prune_at = 0
-        with self._pool.connection() as db:
-            db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sessions (
-                    sid TEXT PRIMARY KEY,
-                    session_json TEXT NOT NULL,
-                    expires_at INTEGER NOT NULL
-                )
-                """
-            )
-            db.commit()
 
     def load(self, sid: str) -> dict[str, Any] | None:
-        with self._pool.connection() as db:
-            row = db.execute(
-                "SELECT session_json, expires_at FROM sessions WHERE sid = ? LIMIT 1",
-                (sid,),
-            ).fetchone()
-
+        with self._session_factory.begin() as session:
+            row = session.get(SessionRow, sid)
             if row is None:
                 return None
 
             now_ms = int(time.time() * 1000)
-            if row["expires_at"] <= now_ms:
-                db.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
-                db.commit()
+            if row.expires_at <= now_ms:
+                session.delete(row)
                 return None
 
-            return json.loads(decrypt_sensitive(row["session_json"], self._encrypt_key))
+            return json.loads(decrypt_sensitive(row.session_json, self._encrypt_key))
 
     def save(self, sid: str, session_data: dict[str, Any], expires_at_ms: int) -> None:
-        with self._pool.connection() as db:
-            self._maybe_prune_expired_sessions(db)
-            db.execute(
-                """
-                INSERT INTO sessions (sid, session_json, expires_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(sid) DO UPDATE SET
-                    session_json = excluded.session_json,
-                    expires_at = excluded.expires_at
-                """,
-                (sid, encrypt_sensitive(json.dumps(session_data), self._encrypt_key), expires_at_ms),
-            )
-            db.commit()
+        statement = insert(SessionRow).values(
+            sid=sid,
+            session_json=encrypt_sensitive(json.dumps(session_data), self._encrypt_key),
+            expires_at=expires_at_ms,
+        )
+        statement = statement.on_conflict_do_update(
+            index_elements=[SessionRow.sid],
+            set_={
+                "session_json": statement.excluded.session_json,
+                "expires_at": statement.excluded.expires_at,
+            },
+        )
+
+        with self._session_factory.begin() as session:
+            self._maybe_prune_expired_sessions(session)
+            session.execute(statement)
 
     def delete(self, sid: str) -> None:
-        with self._pool.connection() as db:
-            db.execute("DELETE FROM sessions WHERE sid = ?", (sid,))
-            db.commit()
+        with self._session_factory.begin() as session:
+            session.execute(delete(SessionRow).where(SessionRow.sid == sid))
 
-    def _maybe_prune_expired_sessions(self, db: sqlite3.Connection) -> None:
+    def _maybe_prune_expired_sessions(self, session: Session) -> None:
         now_ms = int(time.time() * 1000)
         if now_ms - self._last_prune_at < PRUNE_INTERVAL_MS:
             return
 
         self._last_prune_at = now_ms
-        db.execute(
-            "DELETE FROM sessions WHERE sid IN (SELECT sid FROM sessions WHERE expires_at <= ? LIMIT ?)",
-            (now_ms, PRUNE_MAX_ROWS_PER_RUN),
-        )
-        db.commit()
+        expired_sid = select(SessionRow.sid).where(SessionRow.expires_at <= now_ms).limit(PRUNE_MAX_ROWS_PER_RUN)
+        session.execute(delete(SessionRow).where(SessionRow.sid.in_(expired_sid)))
 
 
 def _nullable(value: str) -> str | None:
