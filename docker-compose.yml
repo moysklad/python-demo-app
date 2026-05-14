@@ -1,0 +1,17 @@
+services:
+  python-demo-app:
+    build: .
+    env_file:
+      - .env.example
+    ports:
+      - "9082:9082"
+    volumes:
+      - app-data:/app/tmp/data
+
+volumes:
+  app-data:
+
+networks:
+  default:
+    name: moysklad-all_default
+    external: true
