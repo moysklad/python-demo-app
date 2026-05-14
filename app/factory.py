@@ -79,12 +79,12 @@ def create_app(
         )
 
     sqlite_pool = SqliteConnectionPool(runtime_config.app_db_path)
-    real_app_repository = app_repository or SqliteAppInstanceRepository(
+    app_repository = app_repository or SqliteAppInstanceRepository(
         runtime_config.app_db_path,
         runtime_config.encrypt_key,
         sqlite_pool,
     )
-    real_jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(
+    jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(
         runtime_config.app_db_path,
         sqlite_pool,
     )
@@ -96,19 +96,19 @@ def create_app(
     flask_app.session_interface = SqliteSessionInterface(runtime_config, session_repository)
 
     http_client = HttpClient()
-    real_vendor_api = vendor_api or VendorApi(runtime_config, http_client)
-    real_json_api_factory = json_api_factory or JsonApiFactory(runtime_config, http_client)
-    user_context_service = UserContextService(real_vendor_api)
+    vendor_api = vendor_api or VendorApi(runtime_config, http_client)
+    json_api_factory = json_api_factory or JsonApiFactory(runtime_config, http_client)
+    user_context_service = UserContextService(vendor_api)
     services = AppServices(
         config=runtime_config,
-        app_repository=real_app_repository,
-        jwt_replay_repository=real_jwt_replay_repository,
-        vendor_api=real_vendor_api,
-        json_api_factory=real_json_api_factory,
+        app_repository=app_repository,
+        jwt_replay_repository=jwt_replay_repository,
+        vendor_api=vendor_api,
+        json_api_factory=json_api_factory,
         user_context_service=user_context_service,
-        entry_service=EntryService(runtime_config, real_app_repository, real_json_api_factory),
-        utils_service=UtilsService(runtime_config, real_app_repository, user_context_service, real_vendor_api, real_json_api_factory),
-        vendor_endpoint_service=VendorEndpointService(real_app_repository),
+        entry_service=EntryService(runtime_config, app_repository, json_api_factory),
+        utils_service=UtilsService(runtime_config, app_repository, user_context_service, vendor_api, json_api_factory),
+        vendor_endpoint_service=VendorEndpointService(app_repository),
     )
     flask_app.config["APP_SERVICES"] = services
 
