@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import logging
 import time
 from dataclasses import dataclass
@@ -14,7 +15,13 @@ from app.domain.app_instance import AppInstanceRepository
 from app.integrations.http_client import HttpClient
 from app.integrations.json_api import JsonApiFactory
 from app.integrations.vendor_api import VendorApi
-from app.repositories.sqlite import SqliteAppInstanceRepository, SqliteJwtReplayRepository, SqliteSessionRepository
+from app.repositories.sqlite import (
+    SqliteAppInstanceRepository,
+    SqliteJwtReplayRepository,
+    SqliteSessionRepository,
+    create_sqlite_engine,
+    create_sqlite_session_factory,
+)
 from app.security.crypto import ensure_private_dir
 from app.security.jwt_tools import JwtReplayRepository
 from app.services.entry import EntryService
@@ -73,25 +80,40 @@ def create_app(
             x_prefix=runtime_config.trust_proxy,
         )
 
-    real_app_repository = app_repository or SqliteAppInstanceRepository(runtime_config.app_db_path, runtime_config.encrypt_key)
-    real_jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(runtime_config.app_db_path)
-    session_repository = SqliteSessionRepository(runtime_config.app_db_path, runtime_config.encrypt_key)
+    sqlite_engine = create_sqlite_engine(runtime_config.app_db_path)
+    sqlite_session_factory = create_sqlite_session_factory(sqlite_engine)
+    app_repository = app_repository or SqliteAppInstanceRepository(
+        runtime_config.app_db_path,
+        runtime_config.encrypt_key,
+        sqlite_session_factory,
+    )
+    jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(
+        runtime_config.app_db_path,
+        sqlite_session_factory,
+    )
+    session_repository = SqliteSessionRepository(
+        runtime_config.app_db_path,
+        runtime_config.encrypt_key,
+        sqlite_session_factory,
+    )
     flask_app.session_interface = SqliteSessionInterface(runtime_config, session_repository)
+    flask_app.extensions["sqlite_engine"] = sqlite_engine
+    atexit.register(sqlite_engine.dispose)
 
     http_client = HttpClient()
-    real_vendor_api = vendor_api or VendorApi(runtime_config, http_client)
-    real_json_api_factory = json_api_factory or JsonApiFactory(runtime_config, http_client)
-    user_context_service = UserContextService(real_vendor_api)
+    vendor_api = vendor_api or VendorApi(runtime_config, http_client)
+    json_api_factory = json_api_factory or JsonApiFactory(runtime_config, http_client)
+    user_context_service = UserContextService(vendor_api)
     services = AppServices(
         config=runtime_config,
-        app_repository=real_app_repository,
-        jwt_replay_repository=real_jwt_replay_repository,
-        vendor_api=real_vendor_api,
-        json_api_factory=real_json_api_factory,
+        app_repository=app_repository,
+        jwt_replay_repository=jwt_replay_repository,
+        vendor_api=vendor_api,
+        json_api_factory=json_api_factory,
         user_context_service=user_context_service,
-        entry_service=EntryService(runtime_config, real_app_repository, real_json_api_factory),
-        utils_service=UtilsService(runtime_config, real_app_repository, user_context_service, real_vendor_api, real_json_api_factory),
-        vendor_endpoint_service=VendorEndpointService(real_app_repository),
+        entry_service=EntryService(runtime_config, app_repository, json_api_factory),
+        utils_service=UtilsService(runtime_config, app_repository, user_context_service, vendor_api, json_api_factory),
+        vendor_endpoint_service=VendorEndpointService(app_repository),
     )
     flask_app.config["APP_SERVICES"] = services
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from app.domain.app_instance import AppInstance, AppStatus
-from app.repositories.memory import MemoryAppInstanceRepository
 from app.services.vendor_endpoint import VendorEndpointService
+from tests.memory_repositories import MemoryAppInstanceRepository
 
 
 def test_put_app_sets_settings_required_without_store():
