@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 from app.logging_filters import SensitiveDataFilter
 
@@ -76,6 +77,44 @@ def test_sensitive_data_filter_redacts_access_token_in_payload():
     assert SensitiveDataFilter().filter(record) is True
     assert record.args["access_token"] == "<redacted>"
     assert record.args["nested"]["access_token"] == "<redacted>"
+
+
+def test_sensitive_data_filter_redacts_dataclass_with_sensitive_fields():
+    @dataclass
+    class Payload:
+        access_token: str
+        nested: dict[str, str]
+
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        "Request %s",
+        (Payload(access_token="token-123", nested={"access_token": "token-456"}),),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert record.args[0]["access_token"] == "<redacted>"
+    assert record.args[0]["nested"]["access_token"] == "<redacted>"
+
+
+def test_sensitive_data_filter_redacts_access_token_in_json_string():
+    record = logging.LogRecord(
+        "app.http",
+        logging.DEBUG,
+        __file__,
+        1,
+        'HTTP request started\n\n{"access": [{"access_token": "token-123"}], "cause": "Install"}',
+        (),
+        None,
+    )
+
+    assert SensitiveDataFilter().filter(record) is True
+    assert '"access_token": "<redacted>"' in record.msg
+    assert "token-123" not in record.msg
+    assert '"cause": "Install"' in record.msg
 
 
 def test_sensitive_data_filter_redacts_context_nonce_in_payload():

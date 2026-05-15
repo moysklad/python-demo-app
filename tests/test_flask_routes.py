@@ -170,6 +170,13 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     assert entry_response.status_code == 200
     assert "context-key-1" not in html
     assert 'name="contextKey"' not in html
+    assert 'id="settingsForm"' in html
+    assert 'data-update-url="/utils/update-settings"' in html
+    assert 'id="settingsResult"' in html
+    assert 'id="appStatus"' in html
+    assert 'id="appStatusTitle"' in html
+    assert 'id="appStatusDetails"' in html
+    assert 'src="/assets/entry/iframe.js"' in html
     assert match is not None
 
     widget_response = client.get("/entry/widget-customerorder?contextKey=context-key-1")
@@ -187,6 +194,16 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     )
 
     assert update_response.status_code == 200
+    assert update_response.get_json() == {
+        "message": "Настройки обновлены",
+        "status": {
+            "className": "status-ready",
+            "title": "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
+            "showDetails": True,
+            "infoMessage": "hello",
+            "store": "Основной склад",
+        },
+    }
     app_instance = app_repository.load(app_config.app_id, "account-1")
     assert app_instance.store == "Основной склад"
     assert app_instance.status == AppStatus.ACTIVATED
@@ -224,6 +241,16 @@ def test_update_settings_sets_settings_required_without_store(app_config):
 
     app_instance = app_repository.load(app_config.app_id, "account-1")
     assert response.status_code == 200
+    assert response.get_json() == {
+        "message": "Настройки обновлены",
+        "status": {
+            "className": "status-required",
+            "title": "ТРЕБУЕТСЯ НАСТРОЙКА",
+            "showDetails": False,
+            "infoMessage": "hello",
+            "store": "",
+        },
+    }
     assert app_instance.store == ""
     assert app_instance.status == AppStatus.SETTINGS_REQUIRED
     assert vendor_api.status_updates[-1] == (app_config.app_id, "account-1", "SettingsRequired")

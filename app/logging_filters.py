@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import logging
+from dataclasses import asdict, is_dataclass
 from collections.abc import Mapping
 from typing import Any
 
@@ -26,6 +27,9 @@ SENSITIVE_FIELD_SUBSTRINGS = {
     "access_token",
 }
 SENSITIVE_QUERY_PARAM_RE = re.compile(r"(?i)((?:contextKey|contextNonce)=)([^&\s]+)")
+SENSITIVE_JSON_FIELD_RE = re.compile(
+    r"(?i)([\"'](?:access_token|token|secret|password|passwd|pwd)[\"']\s*:\s*)([\"'])(.*?)(\2)"
+)
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -40,6 +44,8 @@ class SensitiveDataFilter(logging.Filter):
 def _redact_logging_value(value: Any) -> Any:
     if isinstance(value, str):
         return _redact_string(value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return _redact_mapping(asdict(value))
     if isinstance(value, Mapping):
         return _redact_mapping(value)
     if isinstance(value, tuple):
@@ -68,4 +74,5 @@ def _is_sensitive_name(name: str) -> bool:
 
 
 def _redact_string(value: str) -> str:
-    return SENSITIVE_QUERY_PARAM_RE.sub(r"\1<redacted>", value)
+    value = SENSITIVE_QUERY_PARAM_RE.sub(r"\1<redacted>", value)
+    return SENSITIVE_JSON_FIELD_RE.sub(r"\1\2<redacted>\4", value)

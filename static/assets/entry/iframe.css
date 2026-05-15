@@ -156,10 +156,29 @@ textarea {
   color: var(--accent-active);
 }
 
+.btn:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .field-row {
   display: grid;
   grid-template-columns: 1fr;
   gap: var(--space-xxs);
+}
+
+.form-result {
+  min-height: 1.4em;
+  margin-top: var(--space-sm);
+  font-size: var(--font-size-sm);
+}
+
+.form-result.is-success {
+  color: #217346;
+}
+
+.form-result.is-error {
+  color: #b3261e;
 }
 
 .panel-divider {
