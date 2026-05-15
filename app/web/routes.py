@@ -96,11 +96,10 @@ def register_routes(app: Flask, services: Any) -> None:
 
     @app.post("/vendor-endpoint/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>/button")
     def vendor_button(app_id: str, account_id: str):
-        del app_id, account_id
         auth_response = _require_vendor_auth(services)
         if auth_response is not None:
             return auth_response
-        return _service_response(services.vendor_endpoint_service.button(_request_body()))
+        return _service_response(services.vendor_endpoint_service.button(app_id, account_id, _request_body()))
 
 
 def _render_widget(services: Any, entity: str):

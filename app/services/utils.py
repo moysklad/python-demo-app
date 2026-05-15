@@ -15,6 +15,15 @@ from app.services.user_context import UserContextService
 logger = logging.getLogger(__name__)
 
 
+def has_required_settings(app: AppInstance) -> bool:
+    """
+    Пример проверки для готовности установки решения к работе
+    :param app: экземпляр установки решения
+    :return: true если решение уже полностью настроено
+    """
+    return app.store.strip() != ""
+
+
 class UtilsService:
     def __init__(
         self,
@@ -45,9 +54,9 @@ class UtilsService:
         app = self._app_repository.load(self._config.app_id, auth_context.account_id) or AppInstance(self._config.app_id, auth_context.account_id)
         app.info_message = normalized_info_message
         app.store = normalized_store
-        app.status = AppStatus.ACTIVATED
+        app.status = AppStatus.ACTIVATED if has_required_settings(app) else AppStatus.SETTINGS_REQUIRED
 
-        status_updated = self._vendor_api.update_app_status(self._config.app_id, auth_context.account_id, app.get_status_name() or "")
+        status_updated = self._vendor_api.update_app_status(self._config.app_id, auth_context.account_id, app.get_status_name())
         if not status_updated:
             return ServiceResponse(status_code=502, text_body="Не удалось обновить статус приложения во внешнем Vendor API")
 

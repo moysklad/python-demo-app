@@ -4,6 +4,7 @@ import re
 from dataclasses import replace
 
 import app.factory as factory_module
+from app.domain.app_instance import AppStatus
 from app.factory import create_app
 
 from tests.conftest import FakeJsonApiFactory, FakeVendorApi, vendor_auth_header
@@ -152,11 +153,12 @@ def test_vendor_request_log_writes_body_after_blank_line(app_config, monkeypatch
 
 def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_config):
     app_repository = MemoryAppInstanceRepository()
+    vendor_api = FakeVendorApi()
     app = create_app(
         app_config,
         app_repository=app_repository,
         jwt_replay_repository=MemoryJwtReplayRepository(),
-        vendor_api=FakeVendorApi(),
+        vendor_api=vendor_api,
         json_api_factory=FakeJsonApiFactory(),
     )
     client = app.test_client()
@@ -185,7 +187,10 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     )
 
     assert update_response.status_code == 200
-    assert app_repository.load(app_config.app_id, "account-1").store == "Основной склад"
+    app_instance = app_repository.load(app_config.app_id, "account-1")
+    assert app_instance.store == "Основной склад"
+    assert app_instance.status == AppStatus.ACTIVATED
+    assert vendor_api.status_updates[-1] == (app_config.app_id, "account-1", "Activated")
 
     object_response = client.post(
         "/utils/get-object?entity=customerorder",
@@ -194,6 +199,34 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
 
     assert object_response.status_code == 200
     assert object_response.get_data(as_text=True) == "Заказ покупателя Документ"
+
+
+def test_update_settings_sets_settings_required_without_store(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    vendor_api = FakeVendorApi()
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=vendor_api,
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
+
+    assert match is not None
+    response = client.post(
+        "/utils/update-settings",
+        data={"contextNonce": match.group(1), "infoMessage": "hello", "store": "   "},
+    )
+
+    app_instance = app_repository.load(app_config.app_id, "account-1")
+    assert response.status_code == 200
+    assert app_instance.store == ""
+    assert app_instance.status == AppStatus.SETTINGS_REQUIRED
+    assert vendor_api.status_updates[-1] == (app_config.app_id, "account-1", "SettingsRequired")
 
 
 def test_backend_context_rejects_context_key_after_bootstrap(app_config):
