@@ -1,15 +1,17 @@
 services:
   python-demo-app:
-    build: .
+    build:
+      context: .
+    container_name: python-demo-app
     env_file:
       - .env.example
     ports:
-      - "9082:9082"
+      - "8086:8080"
     volumes:
-      - app-data:/app/tmp/data
+      - python-demo-app-data:/app/tmp/data
 
 volumes:
-  app-data:
+  python-demo-app-data:
 
 networks:
   default:

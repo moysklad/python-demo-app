@@ -4,7 +4,7 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=9082 \
+    PORT=8080 \
     DATA_DIR=/app/tmp/data \
     APP_DB_PATH=/app/tmp/data/app.sqlite
 
@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 USER app
 
-EXPOSE 9082
+EXPOSE 8080
 
 VOLUME ["/app/tmp/data"]
 

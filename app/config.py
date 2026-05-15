@@ -34,6 +34,7 @@ class AppConfig:
     secret_key: str = ""
     encrypt_key: str = ""
     app_base_url: str = ""
+    descriptor_endpoint_base_url: str = ""
     session_secret: str = ""
     port: int = 8080
     log_level: str = "DEBUG"
@@ -66,6 +67,7 @@ def load_config(env: Mapping[str, str] | None = None, *, load_dotenv_file: bool 
         secret_key=_required(source, "APP_SECRET_KEY"),
         encrypt_key=_required(source, "APP_ENCRYPT_KEY"),
         app_base_url=_required(source, "APP_BASE_URL"),
+        descriptor_endpoint_base_url=source.get("DESCRIPTOR_ENDPOINT_BASE_URL", defaults.descriptor_endpoint_base_url).strip(),
         session_secret=_required(source, "SESSION_SECRET"),
         port=_int_value(source, "PORT", defaults.port),
         log_level=source.get("LOG_LEVEL", defaults.log_level).upper(),
