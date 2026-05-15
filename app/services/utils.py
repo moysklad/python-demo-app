@@ -15,6 +15,15 @@ from app.services.user_context import UserContextService
 logger = logging.getLogger(__name__)
 
 
+def has_required_settings(app: AppInstance) -> bool:
+    """
+    Пример проверки для готовности установки решения к работе
+    :param app: экземпляр установки решения
+    :return: true если решение уже полностью настроено
+    """
+    return app.store.strip() != ""
+
+
 class UtilsService:
     def __init__(
         self,
@@ -40,19 +49,39 @@ class UtilsService:
 
         normalized_info_message = info_message.strip()
         normalized_store = store.strip()
-        logger.info("Update settings: %s, store: %s", normalized_info_message, normalized_store)
 
         app = self._app_repository.load(self._config.app_id, auth_context.account_id) or AppInstance(self._config.app_id, auth_context.account_id)
         app.info_message = normalized_info_message
         app.store = normalized_store
-        app.status = AppStatus.ACTIVATED
+        app.status = AppStatus.ACTIVATED if has_required_settings(app) else AppStatus.SETTINGS_REQUIRED
+        logger.debug("App settings updating: %s", app)
 
-        status_updated = self._vendor_api.update_app_status(self._config.app_id, auth_context.account_id, app.get_status_name() or "")
+        status_updated = self._vendor_api.update_app_status(self._config.app_id, auth_context.account_id, app.get_status_name())
         if not status_updated:
             return ServiceResponse(status_code=502, text_body="Не удалось обновить статус приложения во внешнем Vendor API")
 
         self._app_repository.save(app)
-        return ServiceResponse(text_body="Настройки обновлены, перезагрузите решение")
+        logger.info(
+            "App settings updated appId=%s accountId=%s status=%s store=%s",
+            app.app_id,
+            app.account_id,
+            app.get_status_name(),
+            app.store,
+        )
+
+        is_settings_required = app.status != AppStatus.ACTIVATED
+        return ServiceResponse(
+            json_body={
+                "message": "Настройки обновлены",
+                "status": {
+                    "className": "status-required" if is_settings_required else "status-ready",
+                    "title": "ТРЕБУЕТСЯ НАСТРОЙКА" if is_settings_required else "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
+                    "showDetails": not is_settings_required,
+                    "infoMessage": app.info_message,
+                    "store": app.store,
+                },
+            }
+        )
 
     def get_object(self, session_data: dict[str, Any], context_nonce: str | None, entity: str, object_id: str) -> ServiceResponse:
         auth_context = self._user_context_service.resolve_backend_context(session_data, context_nonce)

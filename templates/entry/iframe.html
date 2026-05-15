@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/assets/entry/iframe.css">
     <script type="text/javascript"
             src="https://apps-api.moysklad.ru/js/ns/appstore/app/v1/moysklad-iframe-expand-3.js"></script>
+    <script defer src="/assets/entry/iframe.js"></script>
 </head>
 <body>
 <main class="iframe-layout">
@@ -19,20 +20,22 @@
         </ul>
         <div class="panel-divider"></div>
         <h2>Состояние решения</h2>
-        <div class="status-box {{ status_class }}">
-            <div class="status-title">{{ status_title }}</div>
+        <div id="appStatus" class="status-box {{ status_class }}">
+            <div id="appStatusTitle" class="status-title">{{ status_title }}</div>
             {% if show_status_details %}
-                <p>
+                <p id="appStatusDetails">
                     Сообщение: {{ info_message }}<br>
                     Выбран склад: {{ store }}
                 </p>
+            {% else %}
+                <p id="appStatusDetails" hidden></p>
             {% endif %}
         </div>
     </section>
     <section class="panel">
         <h2>Форма настроек</h2>
         {% if is_admin %}
-            <form method="post" action="../utils/update-settings">
+            <form id="settingsForm" method="post" action="../utils/update-settings" data-update-url="/utils/update-settings">
                 <div class="row field-row">
                     <label for="infoMessage">Укажите сообщение</label>
                     <input id="infoMessage" type="text" name="infoMessage">
@@ -47,6 +50,7 @@
                 </div>
                 <input type="hidden" name="contextNonce" value="{{ context_nonce }}"/>
                 <button class="btn" type="submit">Сохранить</button>
+                <div id="settingsResult" class="form-result" role="status" aria-live="polite"></div>
             </form>
         {% else %}
             <p class="muted">Настройки доступны только администратору аккаунта</p>
