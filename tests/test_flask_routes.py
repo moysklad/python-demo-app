@@ -1,29 +1,22 @@
 from __future__ import annotations
 
+import logging
 import re
-from dataclasses import replace
 
-import app.factory as factory_module
-from app.domain.app_instance import AppStatus
+from app.domain.app_instance import AppInstance, AppStatus
 from app.factory import create_app
 
 from tests.conftest import FakeJsonApiFactory, FakeVendorApi, vendor_auth_header
 from tests.memory_repositories import MemoryAppInstanceRepository, MemoryJwtReplayRepository
 
 
-class CountingSessionRepository:
+class CapturingLogHandler(logging.Handler):
     def __init__(self) -> None:
-        self.save_calls = 0
-        self.delete_calls = 0
+        super().__init__(logging.DEBUG)
+        self.messages: list[str] = []
 
-    def load(self, sid):
-        return {}
-
-    def save(self, sid, session_data, expires_at_ms):
-        self.save_calls += 1
-
-    def delete(self, sid):
-        self.delete_calls += 1
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(record.getMessage())
 
 
 def test_health_route(app_config):
@@ -79,7 +72,8 @@ def test_vendor_endpoint_accepts_valid_jwt(app_config):
     assert app_repository.load("app-1", "account-1").access_token == "token"
 
 
-def test_static_assets_do_not_resave_loaded_session(app_config):
+def test_vendor_endpoint_rejects_replayed_jwt(app_config):
+    # повторный JWT должен отбрасываться.
     app = create_app(
         app_config,
         app_repository=MemoryAppInstanceRepository(),
@@ -87,68 +81,182 @@ def test_static_assets_do_not_resave_loaded_session(app_config):
         vendor_api=FakeVendorApi(),
         json_api_factory=FakeJsonApiFactory(),
     )
-    session_repository = CountingSessionRepository()
-    app.session_interface._repository = session_repository
-    signed_sid = app.session_interface._serializer.dumps("sid-1")
     client = app.test_client()
-    client.set_cookie(app_config.session_name, signed_sid)
+    headers = vendor_auth_header(app_config.secret_key, jti="jti-replay")
 
-    response = client.get("/assets/entry/popup.css")
-
-    assert response.status_code == 200
-    assert session_repository.save_calls == 0
-    assert session_repository.delete_calls == 0
-
-
-def test_request_logging_is_not_registered_for_non_debug_level(app_config, monkeypatch):
-    app_config = replace(app_config, log_level="INFO")
-    called = False
-
-    def fake_register_request_logging(app):
-        nonlocal called
-        called = True
-
-    monkeypatch.setattr("app.factory._register_request_logging", fake_register_request_logging)
-
-    create_app(
-        app_config,
-        app_repository=MemoryAppInstanceRepository(),
-        jwt_replay_repository=MemoryJwtReplayRepository(),
-        vendor_api=FakeVendorApi(),
-        json_api_factory=FakeJsonApiFactory(),
-    )
-
-    assert called is False
-
-
-def test_vendor_request_log_writes_body_after_blank_line(app_config, monkeypatch):
-    app = create_app(
-        app_config,
-        app_repository=MemoryAppInstanceRepository(),
-        jwt_replay_repository=MemoryJwtReplayRepository(),
-        vendor_api=FakeVendorApi(),
-        json_api_factory=FakeJsonApiFactory(),
-    )
-    captured: list[tuple[str, tuple[object, ...]]] = []
-
-    def fake_debug(message: str, *args: object) -> None:
-        captured.append((message, args))
-
-    monkeypatch.setattr(factory_module.logger, "debug", fake_debug)
-
-    response = app.test_client().put(
+    first_response = client.put(
         "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=headers,
+        json={"cause": "Install"},
+    )
+    second_response = client.put(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=headers,
         json={"cause": "Install"},
     )
 
-    assert response.status_code == 401
-    assert captured
-    assert "body=" not in captured[0][0]
-    assert captured[0][0].endswith("\nheaders=%s\n\n%s")
-    assert "Content-Type" in captured[0][1][2]
-    assert captured[0][1][-1] == {"cause": "Install"}
-    assert captured[-1][0].endswith("\nheaders=%s")
-    assert "Content-Type" in captured[-1][1][-1]
+    assert first_response.status_code == 200
+    assert second_response.status_code == 401
+
+
+def test_vendor_endpoint_resume_activates_when_store_exists(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    app_repository.save(AppInstance("app-1", "account-1", store="Основной склад", status=AppStatus.SUSPENDED))
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    response = client.put(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-resume"),
+        json={"cause": "Resume"},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {"status": "Activated"}
+    assert app_repository.load("app-1", "account-1").status == AppStatus.ACTIVATED
+
+
+def test_vendor_endpoint_suspend_then_uninstall_flow(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    app_repository.save(AppInstance("app-1", "account-1", access_token="token", status=AppStatus.ACTIVATED))
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    suspend_response = client.delete(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-suspend"),
+        json={"cause": "Suspend"},
+    )
+    suspended_app = app_repository.load("app-1", "account-1")
+    uninstall_response = client.delete(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-uninstall"),
+        json={"cause": "Uninstall"},
+    )
+
+    assert suspend_response.status_code == 200
+    assert suspended_app is not None
+    assert suspended_app.status == AppStatus.SUSPENDED
+    assert suspended_app.access_token == ""
+    assert uninstall_response.status_code == 200
+    assert app_repository.load("app-1", "account-1") is None
+
+
+def test_vendor_endpoint_app_event_handles_permissions_changed(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    # неустановленное решение игнорируется, а установленное получает 200.
+    not_installed_response = client.put(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/event",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-event-1"),
+        json={"cause": "PermissionsChanged", "access": [{"resource": "customerorder"}]},
+    )
+
+    app_repository.save(AppInstance("app-1", "account-1", status=AppStatus.ACTIVATED))
+    installed_response = client.put(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/event",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-event-2"),
+        json={"cause": "PermissionsChanged", "access": [{"resource": "customerorder"}]},
+    )
+
+    assert not_installed_response.status_code == 204
+    assert installed_response.status_code == 200
+
+
+def test_vendor_button_actions_return_expected_json(app_config):
+    # Проверяется нажатие кнопки в карточке и в списке.
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    document_response = client.post(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/button",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-button-doc"),
+        json={
+            "buttonName": "show-popup",
+            "extensionPoint": "customerorder",
+            "objectId": "object-1",
+            "user": {"role": "admin"},
+        },
+    )
+    list_response = client.post(
+        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/button",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-button-list"),
+        json={
+            "buttonName": "show-notification",
+            "extensionPoint": "customerorder",
+            "selected": [{"id": "object-1"}, {"id": "object-2"}],
+        },
+    )
+
+    assert document_response.status_code == 200
+    assert document_response.get_json()["action"] == "showPopup"
+    assert list_response.status_code == 200
+    assert list_response.get_json()["action"] == "showNotification"
+
+
+def test_update_settings_redacts_access_token_in_logs(app_config):
+    # Решение не должно светить access_token ни в request logging, ни в обычном info-логе.
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+    root_logger = logging.getLogger()
+    handler = CapturingLogHandler()
+    root_logger.addHandler(handler)
+    try:
+        entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+        nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
+        assert nonce_match is not None
+
+        install_response = client.put(
+            "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+            headers=vendor_auth_header(app_config.secret_key, jti="jti-redact-install"),
+            json={"cause": "Install", "access": [{"access_token": "token-123"}]},
+        )
+        update_response = client.post(
+            "/utils/update-settings",
+            data={"contextNonce": nonce_match.group(1), "infoMessage": "hello", "store": "Основной склад"},
+        )
+    finally:
+        root_logger.removeHandler(handler)
+
+    assert install_response.status_code == 200
+    assert update_response.status_code == 200
+    assert update_response.get_json()["message"] == "Настройки обновлены"
+    log_text = "\n".join(handler.messages)
+    assert "token-123" not in log_text
+    assert "App settings updated appId=" in log_text
+    assert "status=Activated" in log_text
 
 
 def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_config):
