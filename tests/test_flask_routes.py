@@ -165,22 +165,14 @@ def test_vendor_endpoint_app_event_handles_permissions_changed(app_config):
     )
     client = app.test_client()
 
-    # неустановленное решение игнорируется, а установленное получает 200.
-    not_installed_response = client.put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/event",
-        headers=vendor_auth_header(app_config.secret_key, jti="jti-event-1"),
-        json={"cause": "PermissionsChanged", "access": [{"resource": "customerorder"}]},
-    )
-
     app_repository.save(AppInstance("app-1", "account-1", status=AppStatus.ACTIVATED))
-    installed_response = client.put(
+    response = client.put(
         "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/event",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-event-2"),
-        json={"cause": "PermissionsChanged", "access": [{"resource": "customerorder"}]},
+        json={"cause": "PermissionsChanged"},
     )
 
-    assert not_installed_response.status_code == 204
-    assert installed_response.status_code == 200
+    assert response.status_code == 200
 
 
 def test_vendor_button_actions_return_expected_json(app_config):

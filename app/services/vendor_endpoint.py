@@ -134,19 +134,8 @@ class VendorEndpointService:
         :param body: тело запроса
         :return: статус обработки
         """
-        app = self._app_repository.load(app_id, account_id) or AppInstance(app_id, account_id)
-        if not app.is_installed():
-            logger.info("App appId=%s not installed on accountId=%s", app_id, account_id)
-            return ServiceResponse(status_code=204)
-
         if body.get("cause") == "PermissionsChanged":
-            access = body.get("access")
-            logger.info(
-                "Permissions changed for appId=%s on accountId=%s, %s",
-                app_id,
-                account_id,
-                {"accessItems": len(access) if isinstance(access, list) else 0},
-            )
+            logger.info("Permissions changed for appId=%s on accountId=%s", app_id, account_id)
 
         return ServiceResponse(status_code=200)
 
