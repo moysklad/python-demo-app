@@ -15,11 +15,13 @@ from app.domain.app_instance import AppInstance, AppStatus
 from app.repositories.models import AccountApplicationRow, Base, JwtRow, SessionRow
 from app.security.crypto import decrypt_sensitive, encrypt_sensitive, ensure_private_dir
 
-
-PRUNE_INTERVAL_MS = 60_000
-PRUNE_MAX_ROWS_PER_RUN = 500
 SQLITE_POOL_SIZE = 5
 SQLITE_CONNECTION_CHECKOUT_TIMEOUT_SECONDS = 5.0
+
+# минимальный интервал удаления старых записей
+PRUNE_INTERVAL_SECONDS = 60.0
+# максимальное число удаляемых старых записей за один запуск
+PRUNE_MAX_ROWS_PER_RUN = 1000
 
 
 def create_sqlite_engine(filename: Path) -> Engine:
@@ -52,10 +54,10 @@ def create_sqlite_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 class SqliteAppInstanceRepository:
     def __init__(
-        self,
-        filename: Path,
-        encrypt_key: str,
-        session_factory: sessionmaker[Session] | None = None,
+            self,
+            filename: Path,
+            encrypt_key: str,
+            session_factory: sessionmaker[Session] | None = None,
     ) -> None:
         self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
         self._encrypt_key = encrypt_key
@@ -121,36 +123,37 @@ class SqliteAppInstanceRepository:
 class SqliteJwtReplayRepository:
     def __init__(self, filename: Path, session_factory: sessionmaker[Session] | None = None) -> None:
         self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
-        self._last_prune_at = 0
+        self._next_prune_at = 0.0
 
     def register(self, jti: str, exp_unix_seconds: int) -> bool:
+        expires_at_ms = exp_unix_seconds * 1000
         with self._session_factory.begin() as session:
             self._maybe_prune_expired_jti(session)
             cursor = session.execute(
-                insert(JwtRow).values(jti=jti, expires_at=exp_unix_seconds * 1000).on_conflict_do_nothing()
+                insert(JwtRow).values(jti=jti, expires_at=expires_at_ms).on_conflict_do_nothing()
             )
             return cursor.rowcount == 1
 
     def _maybe_prune_expired_jti(self, session: Session) -> None:
-        now_ms = int(time.time() * 1000)
-        if now_ms - self._last_prune_at < PRUNE_INTERVAL_MS:
+        now = time.monotonic()
+        if now < self._next_prune_at:
             return
 
-        self._last_prune_at = now_ms
-        expired_jti = select(JwtRow.jti).where(JwtRow.expires_at <= now_ms).limit(PRUNE_MAX_ROWS_PER_RUN)
+        self._next_prune_at = now + PRUNE_INTERVAL_SECONDS
+        expired_jti = select(JwtRow.jti).where(JwtRow.expires_at <= _current_epoch_ms()).limit(PRUNE_MAX_ROWS_PER_RUN)
         session.execute(delete(JwtRow).where(JwtRow.jti.in_(expired_jti)))
 
 
 class SqliteSessionRepository:
     def __init__(
-        self,
-        filename: Path,
-        encrypt_key: str,
-        session_factory: sessionmaker[Session] | None = None,
+            self,
+            filename: Path,
+            encrypt_key: str,
+            session_factory: sessionmaker[Session] | None = None,
     ) -> None:
         self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
         self._encrypt_key = encrypt_key
-        self._last_prune_at = 0
+        self._next_prune_at = 0.0
 
     def load(self, sid: str) -> dict[str, Any] | None:
         with self._session_factory.begin() as session:
@@ -158,7 +161,7 @@ class SqliteSessionRepository:
             if row is None:
                 return None
 
-            now_ms = int(time.time() * 1000)
+            now_ms = _current_epoch_ms()
             if row.expires_at <= now_ms:
                 session.delete(row)
                 return None
@@ -188,13 +191,19 @@ class SqliteSessionRepository:
             session.execute(delete(SessionRow).where(SessionRow.sid == sid))
 
     def _maybe_prune_expired_sessions(self, session: Session) -> None:
-        now_ms = int(time.time() * 1000)
-        if now_ms - self._last_prune_at < PRUNE_INTERVAL_MS:
+        now = time.monotonic()
+        if now < self._next_prune_at:
             return
 
-        self._last_prune_at = now_ms
-        expired_sid = select(SessionRow.sid).where(SessionRow.expires_at <= now_ms).limit(PRUNE_MAX_ROWS_PER_RUN)
+        self._next_prune_at = now + PRUNE_INTERVAL_SECONDS
+        expired_sid = (
+            select(SessionRow.sid).where(SessionRow.expires_at <= _current_epoch_ms()).limit(PRUNE_MAX_ROWS_PER_RUN)
+        )
         session.execute(delete(SessionRow).where(SessionRow.sid.in_(expired_sid)))
+
+
+def _current_epoch_ms() -> int:
+    return int(time.time() * 1000)
 
 
 def _nullable(value: str) -> str | None:
