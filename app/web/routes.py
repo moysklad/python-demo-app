@@ -64,7 +64,6 @@ def register_routes(app: Flask, services: Any) -> None:
         )
         return _service_response(response)
 
-    @app.get("/utils/get-object")
     @app.post("/utils/get-object")
     def get_object():
         body = _request_body()
@@ -77,22 +76,22 @@ def register_routes(app: Flask, services: Any) -> None:
         )
         return _service_response(response)
 
-    @app.put("/vendor-endpoint/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>")
+    @app.put("/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>")
     def vendor_put_app(app_id: str, account_id: str):
         _require_vendor_auth(services)
         return _service_response(services.vendor_endpoint_service.put_app(app_id, account_id, _request_body()))
 
-    @app.delete("/vendor-endpoint/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>")
+    @app.delete("/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>")
     def vendor_delete_app(app_id: str, account_id: str):
         _require_vendor_auth(services)
         return _service_response(services.vendor_endpoint_service.delete_app(app_id, account_id, _request_body()))
 
-    @app.put("/vendor-endpoint/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>/event")
+    @app.put("/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>/event")
     def vendor_event(app_id: str, account_id: str):
         _require_vendor_auth(services)
         return _service_response(services.vendor_endpoint_service.app_event(app_id, account_id, _request_body()))
 
-    @app.post("/vendor-endpoint/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>/button")
+    @app.post("/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>/button")
     def vendor_button(app_id: str, account_id: str):
         _require_vendor_auth(services)
         return _service_response(services.vendor_endpoint_service.button(app_id, account_id, _request_body()))
