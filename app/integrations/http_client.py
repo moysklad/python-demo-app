@@ -3,17 +3,20 @@ from __future__ import annotations
 import json
 import logging
 import time
-from http import HTTPStatus
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
-import urllib3
-from urllib3.exceptions import HTTPError
+import requests
+from requests import Session
+from requests.adapters import HTTPAdapter
+from requests.exceptions import RequestException
 from urllib3.util import Retry
 
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_MAX_RETRIES = 2
 DEFAULT_HTTP_RETRY_BASE_SECONDS = 0.25
+LOGNEX_RETRY_AFTER_HEADER = "X-Lognex-Retry-After"
 MAX_LOGGED_RESPONSE_BODY_CHARS = 2000
 
 
@@ -28,8 +31,11 @@ class _HttpResult:
 
 
 class HttpClient:
-    def __init__(self, pool_manager: Any | None = None) -> None:
-        self._pool_manager = pool_manager or urllib3.PoolManager()
+    def __init__(self, session: Session | None = None) -> None:
+        self._session = session or requests.Session()
+        retry_adapter = HTTPAdapter(max_retries=_build_retries())
+        self._session.mount("http://", retry_adapter)
+        self._session.mount("https://", retry_adapter)
 
     def request_json(
         self,
@@ -96,70 +102,45 @@ class HttpClient:
     ) -> _HttpResult | None:
         normalized_method = method.upper()
         request_line = f"{normalized_method} {url}"
-        retries = _build_retries(retryable)
         headers = {
             "Authorization": f"Bearer {bearer_token}",
             "Accept-Encoding": "gzip",
         }
-        request_body = None
 
-        if data is not None:
-            headers["Content-Type"] = "application/json"
-            request_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-
-        if logger.isEnabledFor(logging.DEBUG):
-            log_message = "Request %s service=%s\nheaders=%s"
-            log_args = [request_line, service_name, headers]
-            if data is not None:
-                log_message += "\n\n%s"
-                log_args.append(data)
-
-            logger.debug(log_message, *log_args)
+        _log_debug_request(request_line, service_name, headers, data)
         started_at = time.time()
 
         try:
-            response = self._pool_manager.request(
+            response = self._send_request(
                 normalized_method,
                 url,
-                body=request_body,
                 headers=headers,
-                timeout=urllib3.Timeout(total=DEFAULT_HTTP_TIMEOUT_SECONDS),
-                retries=retries,
-                redirect=True,
-                preload_content=True,
-                decode_content=True,
+                data=data,
+                retryable=retryable,
             )
-        except HTTPError as error:
+        except RequestException as error:
             duration_ms = int((time.time() - started_at) * 1000)
             logger.error(
                 "Transport error %s service=%s error=%s attempt=%s durationMs=%s",
                 request_line,
                 service_name,
                 error,
-                _retry_attempt_count(retries),
+                1,
                 duration_ms,
             )
             return None
 
         duration_ms = int((time.time() - started_at) * 1000)
         attempt = _response_attempt_count(response)
-        body = _decode_response_body(response.data)
+        body = response.text or ""
+        _log_debug_response(request_line, service_name, response, attempt, duration_ms, body)
 
-        if logger.isEnabledFor(logging.DEBUG):
-            log_message = "Response %s service=%s status=%s attempt=%s durationMs=%s\nheaders=%s"
-            log_args = [request_line, service_name, response.status, attempt, duration_ms, getattr(response, "headers", None)]
-            if body != "":
-                log_message += "\n\n%s"
-                log_args.append(_sanitize_response_body_for_log(body))
-
-            logger.debug(log_message, *log_args)
-
-        if not HTTPStatus.OK <= response.status < HTTPStatus.MULTIPLE_CHOICES:
+        if not HTTPStatus.OK <= response.status_code < HTTPStatus.MULTIPLE_CHOICES:
             logger.warning(
                 "HTTP error %s service=%s status=%s attempt=%s durationMs=%s",
                 request_line,
                 service_name,
-                response.status,
+                response.status_code,
                 attempt,
                 duration_ms,
             )
@@ -167,11 +148,45 @@ class HttpClient:
 
         return _HttpResult(body=body, attempt=attempt, duration_ms=duration_ms)
 
+    def _send_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        data: Any,
+        retryable: bool | None,
+    ) -> requests.Response:
+        if retryable is False:
+            request = requests.Request(method, url, headers=headers, json=data)
+            prepared = self._session.prepare_request(request)
+            adapter = HTTPAdapter(max_retries=False)
+            return adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
 
-def _build_retries(retryable: bool | None) -> Retry | bool:
-    if retryable is False:
-        return False
+        lognex_retry_count = 0
+        while True:
+            response = self._session.request(
+                method,
+                url,
+                headers=headers,
+                json=data,
+                timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+            )
 
+            retry_after_seconds = _lognex_retry_after_seconds(response)
+            if (
+                retry_after_seconds is None
+                or lognex_retry_count >= DEFAULT_HTTP_MAX_RETRIES
+                or not _is_lognex_rate_limit_retry(method, response)
+            ):
+                setattr(response, "_lognex_retry_count", lognex_retry_count)
+                return response
+
+            lognex_retry_count += 1
+            time.sleep(retry_after_seconds)
+
+
+def _build_retries() -> Retry:
     return Retry(
         total=DEFAULT_HTTP_MAX_RETRIES,
         backoff_factor=DEFAULT_HTTP_RETRY_BASE_SECONDS,
@@ -180,26 +195,66 @@ def _build_retries(retryable: bool | None) -> Retry | bool:
     )
 
 
-def _decode_response_body(body: bytes | str | None) -> str:
-    if body is None:
-        return ""
-    if isinstance(body, str):
-        return body
-    return body.decode("utf-8")
+def _log_debug_request(request_line: str, service_name: str, headers: dict[str, str], data: Any) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    log_message = "Request %s service=%s\nheaders=%s"
+    log_args: list[Any] = [request_line, service_name, headers]
+    if data is not None:
+        log_message += "\n\n%s"
+        log_args.append(data)
+
+    logger.debug(log_message, *log_args)
 
 
-def _response_attempt_count(response: Any) -> int:
-    retries = getattr(response, "retries", None)
+def _log_debug_response(
+    request_line: str,
+    service_name: str,
+    response: requests.Response,
+    attempt: int,
+    duration_ms: int,
+    body: str,
+) -> None:
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    log_message = "Response %s service=%s status=%s attempt=%s durationMs=%s\nheaders=%s"
+    log_args: list[Any] = [request_line, service_name, response.status_code, attempt, duration_ms, dict(response.headers)]
+    if body != "":
+        log_message += "\n\n%s"
+        log_args.append(_sanitize_response_body_for_log(body))
+
+    logger.debug(log_message, *log_args)
+
+
+def _lognex_retry_after_seconds(response: requests.Response) -> float | None:
+    retry_after_ms = response.headers.get(LOGNEX_RETRY_AFTER_HEADER)
+    if retry_after_ms is None:
+        return None
+
+    try:
+        retry_after_seconds = int(retry_after_ms) / 1000
+    except ValueError:
+        return None
+
+    if retry_after_seconds < 0:
+        return None
+
+    return retry_after_seconds
+
+
+def _is_lognex_rate_limit_retry(method: str, response: requests.Response) -> bool:
+    return response.status_code == HTTPStatus.TOO_MANY_REQUESTS and method.upper() in Retry.DEFAULT_ALLOWED_METHODS
+
+
+def _response_attempt_count(response: requests.Response) -> int:
+    lognex_retry_count = getattr(response, "_lognex_retry_count", 0)
+    retries = getattr(response.raw, "retries", None)
     history = getattr(retries, "history", None)
     if history is None:
-        return 1
-    return len(history) + 1
-
-
-def _retry_attempt_count(retries: Retry | bool) -> int:
-    if not isinstance(retries, Retry):
-        return 1
-    return retries.total + 1
+        return lognex_retry_count + 1
+    return lognex_retry_count + len(history) + 1
 
 
 def _sanitize_response_body_for_log(body: str) -> str:

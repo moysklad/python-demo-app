@@ -13,7 +13,7 @@ def build_descriptor_xml(config: AppConfig) -> str:
         <expand>true</expand>
     </iframe>
     <vendorApi>
-        <endpointBase>{config.app_base_url}/vendor-endpoint</endpointBase>
+        <endpointBase>{config.app_base_url}</endpointBase>
     </vendorApi>
     <access>
         <resource>https://api.moysklad.ru/api/remap/1.2</resource>

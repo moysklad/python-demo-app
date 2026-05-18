@@ -44,7 +44,7 @@ def test_vendor_endpoint_requires_auth(app_config):
     )
 
     response = app.test_client().put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         json={"cause": "Install"},
     )
 
@@ -62,7 +62,7 @@ def test_vendor_endpoint_accepts_valid_jwt(app_config):
     )
 
     response = app.test_client().put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         headers=vendor_auth_header(app_config.secret_key),
         json={"cause": "Install", "access": [{"access_token": "token"}]},
     )
@@ -85,12 +85,12 @@ def test_vendor_endpoint_rejects_replayed_jwt(app_config):
     headers = vendor_auth_header(app_config.secret_key, jti="jti-replay")
 
     first_response = client.put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         headers=headers,
         json={"cause": "Install"},
     )
     second_response = client.put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         headers=headers,
         json={"cause": "Install"},
     )
@@ -112,7 +112,7 @@ def test_vendor_endpoint_resume_activates_when_store_exists(app_config):
     client = app.test_client()
 
     response = client.put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-resume"),
         json={"cause": "Resume"},
     )
@@ -135,13 +135,13 @@ def test_vendor_endpoint_suspend_then_uninstall_flow(app_config):
     client = app.test_client()
 
     suspend_response = client.delete(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-suspend"),
         json={"cause": "Suspend"},
     )
     suspended_app = app_repository.load("app-1", "account-1")
     uninstall_response = client.delete(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-uninstall"),
         json={"cause": "Uninstall"},
     )
@@ -167,7 +167,7 @@ def test_vendor_endpoint_app_event_handles_permissions_changed(app_config):
 
     app_repository.save(AppInstance("app-1", "account-1", status=AppStatus.ACTIVATED))
     response = client.put(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/event",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1/event",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-event-2"),
         json={"cause": "PermissionsChanged"},
     )
@@ -187,7 +187,7 @@ def test_vendor_button_actions_return_expected_json(app_config):
     client = app.test_client()
 
     document_response = client.post(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/button",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1/button",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-button-doc"),
         json={
             "buttonName": "show-popup",
@@ -197,7 +197,7 @@ def test_vendor_button_actions_return_expected_json(app_config):
         },
     )
     list_response = client.post(
-        "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1/button",
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1/button",
         headers=vendor_auth_header(app_config.secret_key, jti="jti-button-list"),
         json={
             "buttonName": "show-notification",
@@ -231,7 +231,7 @@ def test_update_settings_redacts_access_token_in_logs(app_config):
         assert nonce_match is not None
 
         install_response = client.put(
-            "/vendor-endpoint/api/moysklad/vendor/1.0/apps/app-1/account-1",
+            "/api/moysklad/vendor/1.0/apps/app-1/account-1",
             headers=vendor_auth_header(app_config.secret_key, jti="jti-redact-install"),
             json={"cause": "Install", "access": [{"access_token": "token-123"}]},
         )

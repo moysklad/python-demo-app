@@ -100,13 +100,13 @@ TRUST_PROXY=0
 
 Backend-запросы из iframe/виджетов:
 - `POST /utils/update-settings` — сохранение настроек из iframe, требует `contextNonce`
-- `GET /utils/get-object?entity=...&objectId=...&contextNonce=...` — получение открытого объекта для виджета
+- `POST /utils/get-object?entity=...` — получение открытого объекта для виджета, параметры `contextNonce` и `objectId` передаются в теле запроса
 
 Vendor API:
-- `PUT /vendor-endpoint/api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
-- `DELETE /vendor-endpoint/api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
-- `PUT /vendor-endpoint/api/moysklad/vendor/1.0/apps/<appId>/<accountId>/event`
-- `POST /vendor-endpoint/api/moysklad/vendor/1.0/apps/<appId>/<accountId>/button`
+- `PUT /api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
+- `DELETE /api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
+- `PUT /api/moysklad/vendor/1.0/apps/<appId>/<accountId>/event`
+- `POST /api/moysklad/vendor/1.0/apps/<appId>/<accountId>/button`
 
 ## Хранение состояния
 
@@ -128,7 +128,7 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 - Приложение обращается к Vendor API, чтобы получить `uid`, `accountId` и права пользователя.
 - Приложение сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt`.
 - Исходный `contextKey` в сессии не хранится и больше не используется. В шаблоны iframe/виджета передается только `contextNonce`.
-- Запросы из iframe/виджета (`/utils/update-settings`, `/utils/get-object`) передают `contextNonce`.
+- Запросы из iframe/виджета (`POST /utils/update-settings`, `POST /utils/get-object`) передают `contextNonce`.
 - Backend принимает запрос только если `contextNonce` совпадает с активным контекстом в текущей сессии. Если `contextNonce` отсутствует, устарел или не совпал, возвращается `401`.
 
 Когда меняется `contextNonce`:
