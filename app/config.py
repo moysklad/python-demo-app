@@ -36,7 +36,7 @@ class AppConfig:
     app_base_url: str = ""
     session_secret: str = ""
     port: int = 8080
-    log_level: str = "DEBUG"
+    log_level: str = "INFO"
     moysklad_vendor_api_endpoint_url: str = "https://apps-api.moysklad.ru/api/vendor/1.0"
     moysklad_json_api_endpoint_url: str = "https://api.moysklad.ru/api/remap/1.2"
     session_cookie_secure: bool = True
