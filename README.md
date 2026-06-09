@@ -18,11 +18,7 @@
 
 ## Быстрый старт
 
-Порты:
-- локальная разработка — `http://localhost:8080`
-- Docker — `http://localhost:8080` при маппинге `8080:8080`
-
-Локальный запуск:
+Настройка локальной среды и запуск:
 
 ```bash
 python3 -m venv .venv
@@ -32,17 +28,23 @@ cp .env.example .env
 python -m app
 ```
 
+Либо запустите решение в Docker:
+
+```bash
+docker build -t python-demo-app:local .
+docker run --rm -p 8080:8080 --env-file .env python-demo-app:local
+```
+
 Проверка:
 
 ```bash
 curl -sS http://localhost:8080/health
 ```
 
-Docker:
+Генерация дескриптора решения:
 
 ```bash
-docker build -t python-demo-app:local .
-docker run --rm -p 8080:8080 --env-file .env python-demo-app:local
+python -m app.cli.generate_descriptor
 ```
 
 ## Конфигурация
@@ -73,14 +75,6 @@ docker run --rm -p 8080:8080 --env-file .env python-demo-app:local
 - `TRUST_PROXY` (`optional`, default: `1`)
 - `DATA_DIR` (`optional`, default: `./tmp/data`)
 - `APP_DB_PATH` (`optional`, default: `./tmp/data/app.sqlite`)
-
-Для локального HTTP удобно использовать:
-
-```env
-SESSION_COOKIE_SECURE=false
-SESSION_COOKIE_SAME_SITE=lax
-TRUST_PROXY=0
-```
 
 ## CLI утилиты
 
@@ -182,3 +176,43 @@ CLI-утилиты:
 python -m compileall app tests
 pytest
 ```
+
+## Создание черновика решения в личном кабинете
+
+Перейдите в личный кабинет в раздел Решения https://apps.moysklad.ru/cabinet/application
+
+Нажмите кнопку `Создать решение` и заполните необходимые поля. В качестве дескриптора можно использовать заглушку вида:
+
+```xml
+<ServerApplication xsi:schemaLocation="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2 https://apps-api.moysklad.ru/xml/ns/appstore/app/v2/application-v2.xsd" xmlns="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <access>
+        <resource>https://online.moysklad.ru/api/remap/1.2</resource>
+        <scope>admin</scope>
+    </access>
+    <vendorApi>
+        <endpointBase>https://example.com/vendor</endpointBase>
+    </vendorApi>
+</ServerApplication>
+```
+
+Сохраните черновик и скопируйте значения `APP_ID`, `APP_UID`, `APP_SECRET_KEY` с вкладки Учетные данные в .env файл.
+
+## Отладка черновика через cloudflared
+
+Скачайте и установите последнюю версию клиента https://github.com/cloudflare/cloudflared
+
+Создайте Quick Tunnel, выполнив в отдельном терминале 
+
+```bash
+cloudflared tunnel --protocol http2 --edge-ip-version 4 --url http://localhost:8080
+```
+
+Сохраните выданный временный адрес в переменной `APP_BASE_URL` в .env файле. Пример: 
+
+```
+APP_BASE_URL=https://gateway-mazda-titled-easy.trycloudflare.com 
+```
+
+Сгенерируйте дескриптор через `app.cli.generate_descriptor` и сохраните его в личном кабинете в карточке черновика.
+
+После этого можно устанавливать и отлаживать решение в каталоге МоегоСклада, перейдя по адресу `https://online.moysklad.ru/app/#apps?id=<APP_ID>`.
