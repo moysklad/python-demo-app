@@ -90,6 +90,8 @@
   widgetLog("SDK initialized", { debug: true });
   setSdkControlsEnabled(true);
 
+  sdk.autoResizeIframe();
+
   sdk.onOpen((message) => widgetLog("Event: Open", message));
   sdk.onOpenPopup((message) => widgetLog("Event: OpenPopup", message));
 
