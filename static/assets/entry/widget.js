@@ -149,6 +149,8 @@
   widgetLog("SDK initialized", { debug: true });
   setSdkControlsEnabled(true);
 
+  sdk.autoResizeIframe();
+
   const maybeAutoOpenFeedback = (openMessage) => {
     const resolvedId = openMessage == null ? undefined : openMessage.messageId;
 
