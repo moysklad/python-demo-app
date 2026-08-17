@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, delete, event, select
+from sqlalchemy import create_engine, delete, event, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -110,7 +110,31 @@ class SqliteAppInstanceRepository:
         with self._session_factory.begin() as session:
             session.execute(statement)
 
+    def uninstall(self, app_id: str, account_id: str) -> None:
+        """
+        Помечает установку удаленной, сохраняя пользовательские настройки.
+        Токен доступа стирается: при повторной установке МойСклад пришлет новый.
+        """
+        with self._session_factory.begin() as session:
+            session.execute(
+                update(AccountApplicationRow)
+                .where(
+                    AccountApplicationRow.application_id == app_id,
+                    AccountApplicationRow.account_id == account_id,
+                )
+                .values(
+                    status=int(AppStatus.UNINSTALLED),
+                    access_token=None,
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
     def delete(self, app_id: str, account_id: str) -> None:
+        """
+        Полностью удаляет установку вместе с настройками.
+        Используйте вместо uninstall(), если политика хранения данных требует удалять
+        пользовательские настройки при отключении решения от аккаунта.
+        """
         with self._session_factory.begin() as session:
             session.execute(
                 delete(AccountApplicationRow).where(

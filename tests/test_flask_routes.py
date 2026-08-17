@@ -146,12 +146,57 @@ def test_vendor_endpoint_suspend_then_uninstall_flow(app_config):
         json={"cause": "Uninstall"},
     )
 
+    uninstalled_app = app_repository.load("app-1", "account-1")
+
     assert suspend_response.status_code == 200
     assert suspended_app is not None
     assert suspended_app.status == AppStatus.SUSPENDED
     assert suspended_app.access_token == ""
     assert uninstall_response.status_code == 200
-    assert app_repository.load("app-1", "account-1") is None
+    assert uninstalled_app is not None
+    assert uninstalled_app.status == AppStatus.UNINSTALLED
+    assert uninstalled_app.access_token == ""
+
+
+def test_vendor_endpoint_reinstall_restores_settings(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    app_repository.save(
+        AppInstance("app-1", "account-1", store="Основной склад", access_token="token", status=AppStatus.ACTIVATED)
+    )
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    uninstall_response = client.delete(
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-uninstall-1"),
+        json={"cause": "Uninstall"},
+    )
+    repeated_uninstall_response = client.delete(
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-uninstall-2"),
+        json={"cause": "Uninstall"},
+    )
+    install_response = client.put(
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-reinstall"),
+        json={"cause": "Install", "access": [{"access_token": "token-new"}]},
+    )
+    reinstalled_app = app_repository.load("app-1", "account-1")
+
+    assert uninstall_response.status_code == 200
+    assert repeated_uninstall_response.status_code == 204
+    assert install_response.status_code == 200
+    assert install_response.get_json() == {"status": "Activated"}
+    assert reinstalled_app is not None
+    assert reinstalled_app.status == AppStatus.ACTIVATED
+    assert reinstalled_app.store == "Основной склад"
+    assert reinstalled_app.access_token == "token-new"
 
 
 def test_vendor_endpoint_app_event_handles_permissions_changed(app_config):
