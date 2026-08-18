@@ -88,8 +88,14 @@ class VendorEndpointService:
             restored = has_required_settings(app)
             app.status = AppStatus.ACTIVATED if restored else AppStatus.SETTINGS_REQUIRED
             if restored:
-                logger.info("Settings restored for appId=%s on accountId=%s", app_id, account_id)
-            logger.info("App appId=%s installed on accountId=%s. Status: %s", app_id, account_id, app.status)
+                logger.info(
+                    "App appId=%s installed on accountId=%s with restored settings. Status: %s",
+                    app_id,
+                    account_id,
+                    app.status,
+                )
+            else:
+                logger.info("App appId=%s installed on accountId=%s. Status: %s", app_id, account_id, app.status)
         elif cause == "Resume":
             # Приостановка временная: настройки не удалялись, решение продолжает работу с прежней конфигурацией
             app.status = AppStatus.ACTIVATED if has_required_settings(app) else AppStatus.SETTINGS_REQUIRED
