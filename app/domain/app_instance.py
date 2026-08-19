@@ -10,6 +10,8 @@ class AppStatus(IntEnum):
     SETTINGS_REQUIRED = 1
     SUSPENDED = 2
     ACTIVATED = 3
+    # Решение удалено с аккаунта, но настройки сохранены для возможной повторной установки
+    UNINSTALLED = 4
 
 
 @dataclass
@@ -30,7 +32,7 @@ class AppInstance:
         return None
 
     def is_installed(self) -> bool:
-        return self.status != AppStatus.UNKNOWN
+        return self.status not in {AppStatus.UNKNOWN, AppStatus.UNINSTALLED}
 
 
 class AppInstanceRepository(Protocol):
@@ -38,6 +40,9 @@ class AppInstanceRepository(Protocol):
         ...
 
     def save(self, app: AppInstance) -> None:
+        ...
+
+    def uninstall(self, app_id: str, account_id: str) -> None:
         ...
 
     def delete(self, app_id: str, account_id: str) -> None:

@@ -83,9 +83,21 @@ class VendorEndpointService:
             app.access_token = access_token
 
         if cause == "Install":
-            app.status = AppStatus.ACTIVATED if has_required_settings(app) else AppStatus.SETTINGS_REQUIRED
-            logger.info("App appId=%s installed on accountId=%s. Status: %s", app_id, account_id, app.status)
+            # Настройки предыдущей установки сохраняются при удалении решения, поэтому при повторной
+            # установке решение сразу готово к работе и пользователю не нужно настраивать его заново
+            restored = has_required_settings(app)
+            app.status = AppStatus.ACTIVATED if restored else AppStatus.SETTINGS_REQUIRED
+            if restored:
+                logger.info(
+                    "App appId=%s installed on accountId=%s with restored settings. Status: %s",
+                    app_id,
+                    account_id,
+                    app.status,
+                )
+            else:
+                logger.info("App appId=%s installed on accountId=%s. Status: %s", app_id, account_id, app.status)
         elif cause == "Resume":
+            # Приостановка временная: настройки не удалялись, решение продолжает работу с прежней конфигурацией
             app.status = AppStatus.ACTIVATED if has_required_settings(app) else AppStatus.SETTINGS_REQUIRED
             logger.info("App appId=%s resumed on accountId=%s. Status: %s", app_id, account_id, app.status)
         elif cause in {"TariffChanged", "Autoprolongation"}:
@@ -114,8 +126,11 @@ class VendorEndpointService:
 
         cause = body.get("cause")
         if cause == "Uninstall":
-            self._app_repository.delete(app_id, account_id)
-            logger.info("App appId=%s deleted on accountId=%s", app_id, account_id)
+            # Решение удалено с аккаунта. Пользовательские настройки сохраняем, чтобы при повторной
+            # установке не заставлять пользователя настраивать решение заново. Если политика хранения
+            # данных требует обратного, используйте здесь self._app_repository.delete()
+            self._app_repository.uninstall(app_id, account_id)
+            logger.info("App appId=%s uninstalled on accountId=%s, settings kept", app_id, account_id)
         elif cause == "Suspend":
             app.status = AppStatus.SUSPENDED
             app.access_token = ""

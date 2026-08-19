@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.domain.app_instance import AppInstance
+from app.domain.app_instance import AppInstance, AppStatus
 
 
 class MemoryAppInstanceRepository:
@@ -15,6 +15,13 @@ class MemoryAppInstanceRepository:
 
     def save(self, app: AppInstance) -> None:
         self.items[(app.app_id, app.account_id)] = AppInstance(**app.__dict__)
+
+    def uninstall(self, app_id: str, account_id: str) -> None:
+        app = self.items.get((app_id, account_id))
+        if app is None:
+            return
+        app.status = AppStatus.UNINSTALLED
+        app.access_token = ""
 
     def delete(self, app_id: str, account_id: str) -> None:
         self.items.pop((app_id, account_id), None)
