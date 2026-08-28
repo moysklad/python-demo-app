@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -34,10 +35,18 @@ class _HttpResult:
 
 class HttpClient:
     def __init__(self, session: Session | None = None) -> None:
-        self._session = session or requests.Session()
-        retry_adapter = HTTPAdapter(max_retries=_build_retries())
-        self._session.mount("http://", retry_adapter)
-        self._session.mount("https://", retry_adapter)
+        self._injected_session = _configure_session(session) if session is not None else None
+        self._thread_local = threading.local()
+
+    def _session_for_current_thread(self) -> Session:
+        if self._injected_session is not None:
+            return self._injected_session
+
+        session = getattr(self._thread_local, "session", None)
+        if session is None:
+            session = _configure_session(requests.Session())
+            self._thread_local.session = session
+        return session
 
     def request_json(
         self,
@@ -187,15 +196,16 @@ class HttpClient:
         data: Any,
         retryable: bool | None,
     ) -> requests.Response:
+        session = self._session_for_current_thread()
         if retryable is False:
             request = requests.Request(method, url, headers=headers, json=data)
-            prepared = self._session.prepare_request(request)
+            prepared = session.prepare_request(request)
             adapter = HTTPAdapter(max_retries=False)
             return adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
 
         lognex_retry_count = 0
         while True:
-            response = self._session.request(
+            response = session.request(
                 method,
                 url,
                 headers=headers,
@@ -223,6 +233,13 @@ class HttpClient:
                 DEFAULT_HTTP_MAX_RETRIES,
             )
             time.sleep(retry_after_seconds)
+
+
+def _configure_session(session: Session) -> Session:
+    retry_adapter = HTTPAdapter(max_retries=_build_retries())
+    session.mount("http://", retry_adapter)
+    session.mount("https://", retry_adapter)
+    return session
 
 
 def _decode_json_result(

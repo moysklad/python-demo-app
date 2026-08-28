@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import logging
+import threading
 from typing import Any
 
 import requests
@@ -93,3 +95,28 @@ def test_http_client_keeps_urllib_default_retry_methods_for_lognex_429(monkeypat
     assert result is None
     assert [call["method"] for call in session.calls] == ["POST"]
     assert sleep_calls == []
+
+
+def test_http_client_uses_separate_session_for_each_thread(monkeypatch):
+    created_sessions: list[requests.Session] = []
+    session_factory = requests.Session
+
+    def create_session() -> requests.Session:
+        session = session_factory()
+        created_sessions.append(session)
+        return session
+
+    monkeypatch.setattr("app.integrations.http_client.requests.Session", create_session)
+    client = HttpClient()
+    barrier = threading.Barrier(2)
+
+    def get_session(_: int) -> requests.Session:
+        session = client._session_for_current_thread()
+        barrier.wait()
+        return session
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        sessions = list(executor.map(get_session, range(2)))
+
+    assert sessions[0] is not sessions[1]
+    assert len(created_sessions) == 2
