@@ -364,6 +364,7 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
 
     assert object_response.status_code == 200
     assert object_response.get_data(as_text=True) == "Заказ покупателя Документ"
+    assert object_response.headers.get("Set-Cookie") is not None
 
 
 def test_store_request_returns_retry_count(app_config):
@@ -392,6 +393,7 @@ def test_store_request_returns_retry_count(app_config):
         "success": True,
         "retries": 2,
     }
+    assert response.headers.get("Set-Cookie") is None
 
 
 def test_store_request_returns_upstream_failure_with_retry_count(app_config):

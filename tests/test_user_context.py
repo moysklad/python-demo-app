@@ -127,6 +127,27 @@ def test_resolve_backend_context_refreshes_ttl_for_valid_nonce(monkeypatch):
     assert session["userContext"]["expiresAt"] == 8200000
 
 
+def test_resolve_backend_context_can_skip_ttl_refresh(monkeypatch):
+    monkeypatch.setattr("app.services.user_context.time.time", lambda: 1000.0)
+    service = UserContextService(FakeVendorApi())
+    session = {
+        "userContext": {
+            "uid": "user-1",
+            "fio": "Иванов И.",
+            "accountId": "account-1",
+            "isAdmin": True,
+            "contextNonce": "nonce-1",
+            "createdAt": 1000000,
+            "expiresAt": 2000000,
+        }
+    }
+
+    resolved = service.resolve_backend_context(session, "nonce-1", refresh_session=False)
+
+    assert resolved is not None
+    assert session["userContext"]["expiresAt"] == 2000000
+
+
 def test_expired_active_context_is_removed_from_session():
     session = {
         "userContext": {

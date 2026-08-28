@@ -61,7 +61,13 @@ class UserContextService:
             is_admin=check_is_admin(employee),
         )
 
-    def resolve_backend_context(self, session_data: MutableMapping[str, Any], context_nonce: str | None) -> ResolvedBackendAuthContext | None:
+    def resolve_backend_context(
+        self,
+        session_data: MutableMapping[str, Any],
+        context_nonce: str | None,
+        *,
+        refresh_session: bool = True,
+    ) -> ResolvedBackendAuthContext | None:
         if context_nonce is None:
             return None
 
@@ -73,7 +79,8 @@ class UserContextService:
         if not context or context.context_nonce != normalized_nonce:
             return None
 
-        refresh_active_user_context_in_session(session_data, context)
+        if refresh_session:
+            refresh_active_user_context_in_session(session_data, context)
 
         account_id = context.account_id.strip()
         uid = context.uid.strip()
