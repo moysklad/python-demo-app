@@ -52,6 +52,18 @@
                 <button class="btn" type="submit">Сохранить</button>
                 <div id="settingsResult" class="form-result" role="status" aria-live="polite"></div>
             </form>
+            <div class="panel-divider"></div>
+            <h2>Проверка ретраев</h2>
+            <p class="muted">Выполнится выбранное количество запросов списка складов и покажет срабатывания ретраев по заголовку <code>X-Lognex-Retry-After</code>.</p>
+            <form id="retryTestForm" method="post" action="../utils/stores" data-test-url="/utils/stores">
+                <div class="row field-row">
+                    <label for="requestCount">Количество запросов</label>
+                    <input id="requestCount" type="number" name="requestCount" min="1" max="1000" value="50" required>
+                </div>
+                <input type="hidden" name="contextNonce" value="{{ context_nonce }}"/>
+                <button class="btn" type="submit">Запустить проверку</button>
+                <div id="retryTestResult" class="form-result" role="status" aria-live="polite"></div>
+            </form>
         {% else %}
             <p class="muted">Настройки доступны только администратору аккаунта</p>
         {% endif %}

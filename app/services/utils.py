@@ -100,3 +100,36 @@ class UtilsService:
             return ServiceResponse(status_code=502, text_body="Не удалось получить объект")
 
         return ServiceResponse(text_body=f"{ENTITIES_MAP[entity]} {obj['name']}")
+
+    def request_stores(
+        self,
+        session_data: dict[str, Any],
+        context_nonce: str | None,
+    ) -> ServiceResponse:
+        auth_context = self._user_context_service.resolve_backend_context(session_data, context_nonce)
+        if not auth_context:
+            return ServiceResponse(status_code=401, text_body="Ошибка авторизации: откройте iframe заново.")
+
+        if not auth_context.is_admin:
+            return ServiceResponse(status_code=403, text_body="Недостаточно прав")
+
+        app = self._app_repository.load(self._config.app_id, auth_context.account_id) or AppInstance(
+            self._config.app_id,
+            auth_context.account_id,
+        )
+        retries = 0
+
+        def count_retry() -> None:
+            nonlocal retries
+            retries += 1
+
+        stores = self._json_api_factory.create(app.access_token).stores(on_retry=count_retry)
+        successful = stores is not None
+        return ServiceResponse(
+            status_code=200 if successful else 502,
+            json_body={
+                "message": "Запрос выполнен" if successful else "Не удалось получить список складов",
+                "success": successful,
+                "retries": retries,
+            },
+        )

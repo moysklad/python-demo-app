@@ -10,6 +10,7 @@
 - Сохранение настроек решения и обновление статуса во внешнем Vendor API
 - Сохранение пользовательских настроек при приостановке и удалении решения с восстановлением при возобновлении и повторной установке
 - Получение данных из JSON API 1.2 по токену установки
+- Проверка обработки `X-Lognex-Retry-After` серией запросов к JSON API 1.2
 - Встраивание виджетов в Заказ покупателя и Счет покупателю
 - Обработка кастомных кнопок в документе и списке Заказов покупателя
 - Открытие кастомного модального окна из виджета и кнопки
@@ -67,6 +68,7 @@ python -m app.cli.generate_descriptor
 - `APP_BASE_URL` (`required`)
 - `SESSION_SECRET` (`required`)
 - `PORT` (`optional`, default: `8080`)
+- `GUNICORN_THREADS` (`optional`, default: `20`; позволяет backend параллельно обслуживать запросы проверки ретраев)
 - `LOG_LEVEL` (`optional`, default: `DEBUG`)
 - `MOYSKLAD_VENDOR_API_ENDPOINT_URL` (`optional`, default: `https://apps-api.moysklad.ru/api/vendor/1.0`)
 - `MOYSKLAD_JSON_API_ENDPOINT_URL` (`optional`, default: `https://api.moysklad.ru/api/remap/1.2`)
@@ -96,6 +98,7 @@ python -m app.cli.generate_descriptor
 Backend-запросы из iframe/виджетов:
 - `POST /utils/update-settings` — сохранение настроек из iframe, требует `contextNonce`
 - `POST /utils/get-object?entity=...` — получение открытого объекта для виджета, параметры `contextNonce` и `objectId` передаются в теле запроса
+- `POST /utils/stores` — один запрос списка складов с количеством ретраев; iframe вызывает endpoint от 1 до 1000 раз, требуется право администратора и `contextNonce`
 
 Vendor API:
 - `PUT /api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
@@ -140,7 +143,7 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 - Приложение обращается к Vendor API, чтобы получить `uid`, `accountId` и права пользователя.
 - Приложение сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt`.
 - Исходный `contextKey` в сессии не хранится и больше не используется. В шаблоны iframe/виджета передается только `contextNonce`.
-- Запросы из iframe/виджета (`POST /utils/update-settings`, `POST /utils/get-object`) передают `contextNonce`.
+- Запросы из iframe/виджета (`POST /utils/update-settings`, `POST /utils/get-object`, `POST /utils/stores`) передают `contextNonce`.
 - Backend принимает запрос только если `contextNonce` совпадает с активным контекстом в текущей сессии. Если `contextNonce` отсутствует, устарел или не совпал, возвращается `401`.
 
 Когда меняется `contextNonce`:

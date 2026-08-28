@@ -76,6 +76,13 @@ def register_routes(app: Flask, services: Any) -> None:
         )
         return _service_response(response)
 
+    @app.post("/utils/stores")
+    def request_stores():
+        body = _request_body()
+        context_nonce = _trimmed_string(body.get("contextNonce"))
+        response = services.utils_service.request_stores(session, context_nonce)
+        return _service_response(response)
+
     @app.put("/api/moysklad/vendor/1.0/apps/<app_id>/<account_id>")
     def vendor_put_app(app_id: str, account_id: str):
         _require_vendor_auth(services)

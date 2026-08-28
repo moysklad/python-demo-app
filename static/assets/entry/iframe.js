@@ -12,6 +12,8 @@
   const statusBox = document.getElementById("appStatus");
   const statusTitle = document.getElementById("appStatusTitle");
   const statusDetails = document.getElementById("appStatusDetails");
+  const retryTestForm = document.getElementById("retryTestForm");
+  const retryTestResult = document.getElementById("retryTestResult");
 
   if (!form || !result) {
     return;
@@ -83,4 +85,77 @@
       }
     }
   });
+
+  if (retryTestForm && retryTestResult) {
+    const retryButton = retryTestForm.querySelector('button[type="submit"]');
+    const defaultRetryButtonText = retryButton ? retryButton.textContent : "";
+
+    retryTestForm.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      retryTestResult.textContent = "";
+      retryTestResult.classList.remove("is-success", "is-error");
+
+      const requestCountInput = retryTestForm.elements.namedItem("requestCount");
+      const requestCount = Number(requestCountInput ? requestCountInput.value : 0);
+      const maxRequestCount = Number(requestCountInput ? requestCountInput.max : 0) || 100;
+      if (!Number.isInteger(requestCount) || requestCount < 1 || requestCount > maxRequestCount) {
+        retryTestResult.textContent = `Количество запросов должно быть от 1 до ${maxRequestCount}`;
+        retryTestResult.classList.add("is-error");
+        return;
+      }
+
+      if (retryButton) {
+        retryButton.disabled = true;
+        retryButton.textContent = "Выполнение...";
+      }
+
+      let completed = 0;
+      let successful = 0;
+      let failed = 0;
+      let retries = 0;
+
+      function showProgress() {
+        retryTestResult.textContent = `Выполнено: ${completed} из ${requestCount}. Успешно: ${successful}, ошибок: ${failed}, ретраев: ${retries}.`;
+      }
+
+      try {
+        showProgress();
+        await Promise.all(Array.from({ length: requestCount }, async function () {
+          const body = new FormData(retryTestForm);
+          body.delete("requestCount");
+
+          try {
+            const response = await fetch(retryTestForm.dataset.testUrl || retryTestForm.action, {
+              method: "POST",
+              body,
+              credentials: "same-origin",
+            });
+            const contentType = response.headers.get("content-type") || "";
+            const payload = contentType.includes("application/json") ? await response.json() : null;
+
+            retries += payload && Number.isInteger(payload.retries) ? payload.retries : 0;
+            if (response.ok && payload && payload.success) {
+              successful += 1;
+            } else {
+              failed += 1;
+            }
+          } catch (_error) {
+            failed += 1;
+          } finally {
+            completed += 1;
+            showProgress();
+          }
+        }));
+        retryTestResult.classList.add(failed === 0 ? "is-success" : "is-error");
+      } catch (_error) {
+        retryTestResult.textContent = "Не удалось выполнить проверку";
+        retryTestResult.classList.add("is-error");
+      } finally {
+        if (retryButton) {
+          retryButton.disabled = false;
+          retryButton.textContent = defaultRetryButtonText;
+        }
+      }
+    });
+  }
 })();

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -49,12 +50,20 @@ class FakeVendorApi:
 class FakeJsonApi:
     def __init__(self) -> None:
         self.object_response: dict[str, Any] | None = {"id": "object-1", "name": "Документ"}
+        self.stores_successful = True
+        self.stores_retries = 0
 
     def store_names(self) -> list[str]:
         return ["Основной склад"]
 
     def get_object(self, entity: str, object_id: str) -> dict[str, Any] | None:
         return self.object_response
+
+    def stores(self, *, on_retry: Callable[[], None] | None = None) -> dict[str, Any] | None:
+        if on_retry is not None:
+            for _ in range(self.stores_retries):
+                on_retry()
+        return {"rows": []} if self.stores_successful else None
 
 
 class FakeJsonApiFactory:
