@@ -38,21 +38,19 @@ def test_http_client_retries_lognex_429_after_vendor_retry_header(monkeypatch, c
         ]
     )
     client = HttpClient(session)
-    retry_calls: list[None] = []
 
     with caplog.at_level(logging.INFO, logger="app.integrations.http_client"):
-        result = client.request_json(
+        result, retries = client.request_json_with_retries(
             "PUT",
             "https://example.test/status",
             "token",
             {"status": "Activated"},
-            on_retry=lambda: retry_calls.append(None),
         )
 
     assert result == {"ok": True}
     assert [call["method"] for call in session.calls] == ["PUT", "PUT"]
     assert sleep_calls == [1.5]
-    assert retry_calls == [None]
+    assert retries == 1
     assert "X-Lognex-Retry-After header delayMs=1500 retry=1/2" in caplog.text
 
 
@@ -66,17 +64,15 @@ def test_http_client_reports_all_retries_when_rate_limit_is_exhausted(monkeypatc
         ]
     )
     client = HttpClient(session)
-    retry_calls: list[None] = []
 
-    result = client.request_json(
+    result, retries = client.request_json_with_retries(
         "GET",
         "https://example.test/entity/store",
         "token",
-        on_retry=lambda: retry_calls.append(None),
     )
 
     assert result is None
-    assert retry_calls == [None, None]
+    assert retries == 2
     assert len(session.calls) == 3
 
 

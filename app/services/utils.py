@@ -117,13 +117,7 @@ class UtilsService:
             self._config.app_id,
             auth_context.account_id,
         )
-        retries = 0
-
-        def count_retry() -> None:
-            nonlocal retries
-            retries += 1
-
-        stores = self._json_api_factory.create(app.access_token).stores(on_retry=count_retry)
+        stores, retries = self._json_api_factory.create(app.access_token).stores_with_retries()
         successful = stores is not None
         return ServiceResponse(
             status_code=200 if successful else 502,

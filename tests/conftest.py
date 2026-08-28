@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -59,11 +58,9 @@ class FakeJsonApi:
     def get_object(self, entity: str, object_id: str) -> dict[str, Any] | None:
         return self.object_response
 
-    def stores(self, *, on_retry: Callable[[], None] | None = None) -> dict[str, Any] | None:
-        if on_retry is not None:
-            for _ in range(self.stores_retries):
-                on_retry()
-        return {"rows": []} if self.stores_successful else None
+    def stores_with_retries(self) -> tuple[dict[str, Any] | None, int]:
+        stores = {"rows": []} if self.stores_successful else None
+        return stores, self.stores_retries
 
 
 class FakeJsonApiFactory:

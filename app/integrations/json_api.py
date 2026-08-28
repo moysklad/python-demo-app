@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 from app.config import AppConfig
@@ -13,14 +12,22 @@ class JsonApi:
         self._access_token = access_token
         self._http_client = http_client or HttpClient()
 
-    def stores(self, *, on_retry: Callable[[], None] | None = None) -> dict[str, Any] | None:
+    def stores(self) -> dict[str, Any] | None:
         return self._http_client.request_json(
             "GET",
             f"{self._config.moysklad_json_api_endpoint_url}/entity/store",
             self._access_token,
             service_name="json-api",
-            on_retry=on_retry,
         )
+
+    def stores_with_retries(self) -> tuple[dict[str, Any] | None, int]:
+        stores, retries = self._http_client.request_json_with_retries(
+            "GET",
+            f"{self._config.moysklad_json_api_endpoint_url}/entity/store",
+            self._access_token,
+            service_name="json-api",
+        )
+        return stores if isinstance(stores, dict) else None, retries
 
     def store_names(self) -> list[str]:
         stores = self.stores()

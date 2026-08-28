@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -29,6 +28,8 @@ class _HttpResult:
     body: str
     attempt: int
     duration_ms: int
+    lognex_retries: int
+    successful: bool
 
 
 class HttpClient:
@@ -47,7 +48,6 @@ class HttpClient:
         *,
         service_name: str = "external-api",
         retryable: bool | None = None,
-        on_retry: Callable[[], None] | None = None,
     ) -> Any | None:
         """Send an HTTP request and decode a JSON response body.
 
@@ -62,25 +62,30 @@ class HttpClient:
             data,
             service_name=service_name,
             retryable=retryable,
-            on_retry=on_retry,
         )
+        return _decode_json_result(method, url, service_name, result)
 
-        if result is None or result.body == "":
-            return None
-
-        try:
-            return json.loads(result.body)
-        except ValueError as error:
-            request_line = f"{method.upper()} {url}"
-            logger.warning(
-                "Failed to decode JSON for %s service=%s error=%s attempt=%s durationMs=%s",
-                request_line,
-                service_name,
-                error,
-                result.attempt,
-                result.duration_ms,
-            )
-            return None
+    def request_json_with_retries(
+        self,
+        method: str,
+        url: str,
+        bearer_token: str,
+        data: Any = None,
+        *,
+        service_name: str = "external-api",
+        retryable: bool | None = None,
+    ) -> tuple[Any | None, int]:
+        """Send an HTTP request and return its JSON body and Lognex retry count."""
+        result = self._request(
+            method,
+            url,
+            bearer_token,
+            data,
+            service_name=service_name,
+            retryable=retryable,
+        )
+        decoded = _decode_json_result(method, url, service_name, result)
+        return decoded, result.lognex_retries if result is not None else 0
 
     def execute(
         self,
@@ -98,15 +103,15 @@ class HttpClient:
         content is irrelevant. It returns `True` for any successful 2xx
         response and `False` for transport errors or non-2xx responses.
         """
-        return self._request(
+        result = self._request(
             method,
             url,
             bearer_token,
             data,
             service_name=service_name,
             retryable=retryable,
-            on_retry=None,
-        ) is not None
+        )
+        return result is not None and result.successful
 
     def _request(
         self,
@@ -117,7 +122,6 @@ class HttpClient:
         *,
         service_name: str,
         retryable: bool | None,
-        on_retry: Callable[[], None] | None,
     ) -> _HttpResult | None:
         normalized_method = method.upper()
         request_line = f"{normalized_method} {url}"
@@ -136,7 +140,6 @@ class HttpClient:
                 headers=headers,
                 data=data,
                 retryable=retryable,
-                on_retry=on_retry,
             )
         except RequestException as error:
             duration_ms = int((time.time() - started_at) * 1000)
@@ -153,9 +156,11 @@ class HttpClient:
         duration_ms = int((time.time() - started_at) * 1000)
         attempt = _response_attempt_count(response)
         body = response.text or ""
+        lognex_retries = int(getattr(response, "_lognex_retry_count", 0))
+        successful = HTTPStatus.OK <= response.status_code < HTTPStatus.MULTIPLE_CHOICES
         _log_debug_response(request_line, service_name, response, attempt, duration_ms, body)
 
-        if not HTTPStatus.OK <= response.status_code < HTTPStatus.MULTIPLE_CHOICES:
+        if not successful:
             logger.warning(
                 "HTTP error %s service=%s status=%s attempt=%s durationMs=%s",
                 request_line,
@@ -164,9 +169,14 @@ class HttpClient:
                 attempt,
                 duration_ms,
             )
-            return None
 
-        return _HttpResult(body=body, attempt=attempt, duration_ms=duration_ms)
+        return _HttpResult(
+            body=body,
+            attempt=attempt,
+            duration_ms=duration_ms,
+            lognex_retries=lognex_retries,
+            successful=successful,
+        )
 
     def _send_request(
         self,
@@ -176,7 +186,6 @@ class HttpClient:
         headers: dict[str, str],
         data: Any,
         retryable: bool | None,
-        on_retry: Callable[[], None] | None,
     ) -> requests.Response:
         if retryable is False:
             request = requests.Request(method, url, headers=headers, json=data)
@@ -213,9 +222,31 @@ class HttpClient:
                 lognex_retry_count,
                 DEFAULT_HTTP_MAX_RETRIES,
             )
-            if on_retry is not None:
-                on_retry()
             time.sleep(retry_after_seconds)
+
+
+def _decode_json_result(
+    method: str,
+    url: str,
+    service_name: str,
+    result: _HttpResult | None,
+) -> Any | None:
+    if result is None or not result.successful or result.body == "":
+        return None
+
+    try:
+        return json.loads(result.body)
+    except ValueError as error:
+        request_line = f"{method.upper()} {url}"
+        logger.warning(
+            "Failed to decode JSON for %s service=%s error=%s attempt=%s durationMs=%s",
+            request_line,
+            service_name,
+            error,
+            result.attempt,
+            result.duration_ms,
+        )
+        return None
 
 
 def _build_retries() -> Retry:
