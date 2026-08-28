@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from http import HTTPStatus
 from typing import Any
@@ -46,6 +47,7 @@ class HttpClient:
         *,
         service_name: str = "external-api",
         retryable: bool | None = None,
+        on_retry: Callable[[], None] | None = None,
     ) -> Any | None:
         """Send an HTTP request and decode a JSON response body.
 
@@ -53,7 +55,15 @@ class HttpClient:
         Returns `None` for transport errors, non-2xx responses, empty bodies,
         or invalid JSON payloads.
         """
-        result = self._request(method, url, bearer_token, data, service_name=service_name, retryable=retryable)
+        result = self._request(
+            method,
+            url,
+            bearer_token,
+            data,
+            service_name=service_name,
+            retryable=retryable,
+            on_retry=on_retry,
+        )
 
         if result is None or result.body == "":
             return None
@@ -88,7 +98,15 @@ class HttpClient:
         content is irrelevant. It returns `True` for any successful 2xx
         response and `False` for transport errors or non-2xx responses.
         """
-        return self._request(method, url, bearer_token, data, service_name=service_name, retryable=retryable) is not None
+        return self._request(
+            method,
+            url,
+            bearer_token,
+            data,
+            service_name=service_name,
+            retryable=retryable,
+            on_retry=None,
+        ) is not None
 
     def _request(
         self,
@@ -99,6 +117,7 @@ class HttpClient:
         *,
         service_name: str,
         retryable: bool | None,
+        on_retry: Callable[[], None] | None,
     ) -> _HttpResult | None:
         normalized_method = method.upper()
         request_line = f"{normalized_method} {url}"
@@ -117,6 +136,7 @@ class HttpClient:
                 headers=headers,
                 data=data,
                 retryable=retryable,
+                on_retry=on_retry,
             )
         except RequestException as error:
             duration_ms = int((time.time() - started_at) * 1000)
@@ -156,6 +176,7 @@ class HttpClient:
         headers: dict[str, str],
         data: Any,
         retryable: bool | None,
+        on_retry: Callable[[], None] | None,
     ) -> requests.Response:
         if retryable is False:
             request = requests.Request(method, url, headers=headers, json=data)
@@ -183,6 +204,17 @@ class HttpClient:
                 return response
 
             lognex_retry_count += 1
+            logger.info(
+                "Retrying %s %s after %s header delayMs=%s retry=%s/%s",
+                method,
+                url,
+                LOGNEX_RETRY_AFTER_HEADER,
+                response.headers.get(LOGNEX_RETRY_AFTER_HEADER),
+                lognex_retry_count,
+                DEFAULT_HTTP_MAX_RETRIES,
+            )
+            if on_retry is not None:
+                on_retry()
             time.sleep(retry_after_seconds)
 
 
