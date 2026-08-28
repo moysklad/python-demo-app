@@ -106,11 +106,7 @@ class UtilsService:
         session_data: dict[str, Any],
         context_nonce: str | None,
     ) -> ServiceResponse:
-        auth_context = self._user_context_service.resolve_backend_context(
-            session_data,
-            context_nonce,
-            refresh_session=False,
-        )
+        auth_context = self._user_context_service.resolve_backend_context(session_data, context_nonce)
         if not auth_context:
             return ServiceResponse(status_code=401, text_body="Ошибка авторизации: откройте iframe заново.")
 
