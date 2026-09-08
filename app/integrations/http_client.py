@@ -12,16 +12,41 @@ import requests
 from requests import Session
 from requests.adapters import HTTPAdapter
 from requests.exceptions import RequestException
+from urllib3.exceptions import MaxRetryError
 from urllib3.util import Retry
 
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
 DEFAULT_HTTP_MAX_RETRIES = 2
 DEFAULT_HTTP_RETRY_BASE_SECONDS = 0.25
 LOGNEX_RETRY_AFTER_HEADER = "X-Lognex-Retry-After"
+LOGNEX_RETRY_INTERVAL_HEADER = "X-Lognex-Retry-TimeInterval"
+RATE_LIMIT_HEADER = "X-RateLimit-Limit"
 MAX_LOGGED_RESPONSE_BODY_CHARS = 2000
 
 
 logger = logging.getLogger(__name__)
+
+
+class LognexRetry(Retry):
+    """urllib3.Retry that understands MoySklad's millisecond X-Lognex-Retry-After header."""
+
+    def get_retry_after(self, response: Any) -> float | None:
+        retry_after_seconds = _lognex_retry_after_seconds(response.headers)
+        if retry_after_seconds is not None:
+            return min(retry_after_seconds, float(self.retry_after_max))
+        return super().get_retry_after(response)
+
+    def is_retry(self, method: str, status_code: int, has_retry_after: bool = False) -> bool:
+        if not self._is_method_retryable(method):
+            return False
+        if self.status_forcelist and status_code in self.status_forcelist:
+            return True
+        return bool(
+            self.total
+            and self.respect_retry_after_header
+            and has_retry_after
+            and status_code == HTTPStatus.TOO_MANY_REQUESTS
+        )
 
 
 @dataclass(frozen=True)
@@ -33,10 +58,62 @@ class _HttpResult:
     successful: bool
 
 
+class _LognexRateLimitGate:
+    """Shared rate-limit wait for parallel requests within one limit scope.
+
+    Holds a not-before deadline from X-Lognex-Retry-After and from the
+    advertised rate (X-RateLimit-Limit / X-Lognex-Retry-TimeInterval), and
+    lets one thread send at a time so the deadline is not raced. MoySklad
+    counts limits per account and per API, so each scope needs its own gate.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._send_lock = threading.Lock()
+        self._not_before = 0.0
+
+    def wait(self) -> None:
+        while True:
+            with self._lock:
+                delay = self._not_before - time.monotonic()
+            if delay <= 0:
+                return
+            time.sleep(delay)
+
+    def block_for(self, seconds: float) -> None:
+        deadline = time.monotonic() + max(0.0, seconds)
+        with self._lock:
+            if deadline > self._not_before:
+                self._not_before = deadline
+
+    def slot(self) -> threading.Lock:
+        return self._send_lock
+
+    def observe(self, response: requests.Response) -> None:
+        spacing = _rate_limit_spacing_seconds(response.headers) or 0.0
+        if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+            retry_after = _lognex_retry_after_seconds(response.headers) or 0.0
+            self.block_for(max(retry_after, spacing))
+        elif spacing > 0:
+            self.block_for(spacing)
+
+
 class HttpClient:
     def __init__(self, session: Session | None = None) -> None:
         self._injected_session = _configure_session(session) if session is not None else None
         self._thread_local = threading.local()
+        self._gates_lock = threading.Lock()
+        self._gates: dict[tuple[str, str], _LognexRateLimitGate] = {}
+
+    def _gate_for(self, service_name: str, bearer_token: str) -> _LognexRateLimitGate:
+        """Rate limits are counted per API and per account, so gate on both."""
+        key = (service_name, bearer_token)
+        with self._gates_lock:
+            gate = self._gates.get(key)
+            if gate is None:
+                gate = _LognexRateLimitGate()
+                self._gates[key] = gate
+            return gate
 
     def _session_for_current_thread(self) -> Session:
         if self._injected_session is not None:
@@ -149,6 +226,7 @@ class HttpClient:
                 headers=headers,
                 data=data,
                 retryable=retryable,
+                gate=self._gate_for(service_name, bearer_token),
             )
         except RequestException as error:
             duration_ms = int((time.time() - started_at) * 1000)
@@ -195,44 +273,65 @@ class HttpClient:
         headers: dict[str, str],
         data: Any,
         retryable: bool | None,
+        gate: _LognexRateLimitGate,
     ) -> requests.Response:
         session = self._session_for_current_thread()
         if retryable is False:
-            request = requests.Request(method, url, headers=headers, json=data)
-            prepared = session.prepare_request(request)
-            adapter = HTTPAdapter(max_retries=False)
-            return adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
+            return self._send_once(session, method, url, headers=headers, data=data, retryable=False, gate=gate)
 
-        lognex_retry_count = 0
+        retries = _build_retries()
         while True:
-            response = session.request(
-                method,
-                url,
-                headers=headers,
-                json=data,
-                timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
-            )
-
-            retry_after_seconds = _lognex_retry_after_seconds(response)
-            if (
-                retry_after_seconds is None
-                or lognex_retry_count >= DEFAULT_HTTP_MAX_RETRIES
-                or not _is_lognex_rate_limit_retry(method, response)
-            ):
-                setattr(response, "_lognex_retry_count", lognex_retry_count)
+            response = self._send_once(session, method, url, headers=headers, data=data, retryable=True, gate=gate)
+            retry_view = _RetryAfterView(response)
+            retry_after = retries.get_retry_after(retry_view)
+            if not retries.is_retry(method, response.status_code, retry_after is not None):
+                setattr(response, "_lognex_retry_count", _lognex_retry_count(retries))
                 return response
 
-            lognex_retry_count += 1
+            try:
+                retries = retries.increment(method, url, response=retry_view)
+            except MaxRetryError:
+                setattr(response, "_lognex_retry_count", _lognex_retry_count(retries))
+                return response
+
             logger.info(
                 "Retrying %s %s after %s header delayMs=%s retry=%s/%s",
                 method,
                 url,
                 LOGNEX_RETRY_AFTER_HEADER,
                 response.headers.get(LOGNEX_RETRY_AFTER_HEADER),
-                lognex_retry_count,
+                len(retries.history),
                 DEFAULT_HTTP_MAX_RETRIES,
             )
-            time.sleep(retry_after_seconds)
+
+    def _send_once(
+        self,
+        session: Session,
+        method: str,
+        url: str,
+        *,
+        headers: dict[str, str],
+        data: Any,
+        retryable: bool,
+        gate: _LognexRateLimitGate,
+    ) -> requests.Response:
+        with gate.slot():
+            gate.wait()
+            if not retryable:
+                request = requests.Request(method, url, headers=headers, json=data)
+                prepared = session.prepare_request(request)
+                adapter = HTTPAdapter(max_retries=False)
+                response = adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
+            else:
+                response = session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=data,
+                    timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+                )
+            gate.observe(response)
+            return response
 
 
 def _configure_session(session: Session) -> Session:
@@ -266,13 +365,22 @@ def _decode_json_result(
         return None
 
 
-def _build_retries() -> Retry:
-    return Retry(
+def _build_retries() -> LognexRetry:
+    return LognexRetry(
         total=DEFAULT_HTTP_MAX_RETRIES,
         backoff_factor=DEFAULT_HTTP_RETRY_BASE_SECONDS,
         raise_on_status=False,
         respect_retry_after_header=True,
     )
+
+
+class _RetryAfterView:
+    def __init__(self, response: requests.Response) -> None:
+        self.headers = response.headers
+        self.status = response.status_code
+
+    def get_redirect_location(self) -> None:
+        return None
 
 
 def _log_debug_request(request_line: str, service_name: str, headers: dict[str, str], data: Any) -> None:
@@ -308,24 +416,34 @@ def _log_debug_response(
     logger.debug(log_message, *log_args)
 
 
-def _lognex_retry_after_seconds(response: requests.Response) -> float | None:
-    retry_after_ms = response.headers.get(LOGNEX_RETRY_AFTER_HEADER)
-    if retry_after_ms is None:
+def _header_int(headers: Any, name: str) -> int | None:
+    raw = headers.get(name)
+    if raw is None:
         return None
-
     try:
-        retry_after_seconds = int(retry_after_ms) / 1000
-    except ValueError:
+        return int(raw)
+    except (TypeError, ValueError):
         return None
 
-    if retry_after_seconds < 0:
+
+def _lognex_retry_after_seconds(headers: Any) -> float | None:
+    retry_after_ms = _header_int(headers, LOGNEX_RETRY_AFTER_HEADER)
+    if retry_after_ms is None or retry_after_ms < 0:
         return None
+    return retry_after_ms / 1000
 
-    return retry_after_seconds
+
+def _rate_limit_spacing_seconds(headers: Any) -> float | None:
+    """Sustainable delay between requests from the advertised rate limit."""
+    limit = _header_int(headers, RATE_LIMIT_HEADER)
+    interval_ms = _header_int(headers, LOGNEX_RETRY_INTERVAL_HEADER)
+    if not limit or not interval_ms or limit <= 0 or interval_ms <= 0:
+        return None
+    return interval_ms / 1000 / limit
 
 
-def _is_lognex_rate_limit_retry(method: str, response: requests.Response) -> bool:
-    return response.status_code == HTTPStatus.TOO_MANY_REQUESTS and method.upper() in Retry.DEFAULT_ALLOWED_METHODS
+def _lognex_retry_count(retries: Retry) -> int:
+    return sum(1 for item in retries.history if item.status == HTTPStatus.TOO_MANY_REQUESTS)
 
 
 def _response_attempt_count(response: requests.Response) -> int:
