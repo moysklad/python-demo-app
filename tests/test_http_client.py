@@ -113,7 +113,8 @@ def test_http_client_keeps_urllib_default_retry_methods_for_lognex_429(monkeypat
 
 
 def test_http_client_paces_requests_by_advertised_rate_limit(monkeypatch):
-    # 5 запросов за 3000 мс -> 600 мс между отправками.
+    # 5 запросов за 3000 мс -> 600 мс между отправками. Первый ответ только учит spacing,
+    # второй занимает слот, третий уже ждёт.
     sleeps, _now = _install_fake_clock(monkeypatch)
     limit_headers = {
         "X-RateLimit-Limit": "5",
@@ -124,9 +125,13 @@ def test_http_client_paces_requests_by_advertised_rate_limit(monkeypatch):
         [
             make_response(200, headers=limit_headers, body='{"ok": true}'),
             make_response(200, headers=limit_headers, body='{"ok": true}'),
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
         ]
     )
     client = HttpClient(session)
+
+    client.request_json("GET", "https://example.test/entity/store", "token")
+    assert sleeps == []
 
     client.request_json("GET", "https://example.test/entity/store", "token")
     assert sleeps == []
@@ -154,6 +159,38 @@ def test_http_client_paces_each_account_separately(monkeypatch):
     client.request_json("GET", "https://example.test/entity/store", "token-second-account")
 
     assert sleeps == []
+
+
+def test_http_client_does_not_add_response_rtt_to_reserved_spacing(monkeypatch):
+    # observe() на 200 только запоминает spacing; слот уже занят в reserve() от момента отправки.
+    sleeps, now = _install_fake_clock(monkeypatch)
+    limit_headers = {
+        "X-RateLimit-Limit": "5",
+        "X-Lognex-Retry-TimeInterval": "3000",
+    }
+    session = QueuedSession(
+        [
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
+        ]
+    )
+    original_request = session.request
+
+    def request_with_rtt(method: str, url: str, **kwargs: Any) -> requests.Response:
+        response = original_request(method, url, **kwargs)
+        now[0] += 0.2
+        return response
+
+    session.request = request_with_rtt
+    client = HttpClient(session)
+
+    client.request_json("GET", "https://example.test/entity/store", "token")
+    client.request_json("GET", "https://example.test/entity/store", "token")
+    assert sleeps == []
+
+    client.request_json("GET", "https://example.test/entity/store", "token")
+    assert sleeps == [0.4]
 
 
 def test_lognex_retry_reads_vendor_header_as_milliseconds():

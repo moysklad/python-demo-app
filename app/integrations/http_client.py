@@ -84,13 +84,19 @@ class _LognexRateLimitGate:
 
     def observe(self, response: requests.Response) -> None:
         spacing = _rate_limit_spacing_seconds(response.headers)
-        retry_after = 0.0
-        if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
-            retry_after = _lognex_retry_after_seconds(response.headers) or 0.0
+        retry_after = (
+            _lognex_retry_after_seconds(response.headers)
+            if response.status_code == HTTPStatus.TOO_MANY_REQUESTS
+            else None
+        )
         with self._lock:
             if spacing is not None:
                 self._spacing = spacing
-            deadline = time.monotonic() + max(retry_after, self._spacing)
+            # reserve() already parked the next slot at send time. Pushing
+            # _not_before here on 2xx would add response RTT on top of spacing.
+            if retry_after is None:
+                return
+            deadline = time.monotonic() + retry_after
             if deadline > self._not_before:
                 self._not_before = deadline
 
