@@ -59,43 +59,40 @@ class _HttpResult:
 
 
 class _LognexRateLimitGate:
-    """Shared rate-limit wait for parallel requests within one limit scope.
+    """Paces parallel requests within one rate-limit scope.
 
-    Holds a not-before deadline from X-Lognex-Retry-After and from the
-    advertised rate (X-RateLimit-Limit / X-Lognex-Retry-TimeInterval), and
-    lets one thread send at a time so the deadline is not raced. MoySklad
+    Learns the sustainable spacing from X-RateLimit-Limit and
+    X-Lognex-Retry-TimeInterval and hands out send slots up front, so threads
+    wait in parallel and network time overlaps instead of adding up. MoySklad
     counts limits per account and per API, so each scope needs its own gate.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._send_lock = threading.Lock()
         self._not_before = 0.0
+        self._spacing = 0.0
 
-    def wait(self) -> None:
-        while True:
-            with self._lock:
-                delay = self._not_before - time.monotonic()
-            if delay <= 0:
-                return
+    def reserve(self) -> None:
+        """Claim the next send slot and sleep until it opens."""
+        with self._lock:
+            now = time.monotonic()
+            start = max(now, self._not_before)
+            self._not_before = start + self._spacing
+        delay = start - now
+        if delay > 0:
             time.sleep(delay)
 
-    def block_for(self, seconds: float) -> None:
-        deadline = time.monotonic() + max(0.0, seconds)
-        with self._lock:
-            if deadline > self._not_before:
-                self._not_before = deadline
-
-    def slot(self) -> threading.Lock:
-        return self._send_lock
-
     def observe(self, response: requests.Response) -> None:
-        spacing = _rate_limit_spacing_seconds(response.headers) or 0.0
+        spacing = _rate_limit_spacing_seconds(response.headers)
+        retry_after = 0.0
         if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
             retry_after = _lognex_retry_after_seconds(response.headers) or 0.0
-            self.block_for(max(retry_after, spacing))
-        elif spacing > 0:
-            self.block_for(spacing)
+        with self._lock:
+            if spacing is not None:
+                self._spacing = spacing
+            deadline = time.monotonic() + max(retry_after, self._spacing)
+            if deadline > self._not_before:
+                self._not_before = deadline
 
 
 class HttpClient:
@@ -315,23 +312,22 @@ class HttpClient:
         retryable: bool,
         gate: _LognexRateLimitGate,
     ) -> requests.Response:
-        with gate.slot():
-            gate.wait()
-            if not retryable:
-                request = requests.Request(method, url, headers=headers, json=data)
-                prepared = session.prepare_request(request)
-                adapter = HTTPAdapter(max_retries=False)
-                response = adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
-            else:
-                response = session.request(
-                    method,
-                    url,
-                    headers=headers,
-                    json=data,
-                    timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
-                )
-            gate.observe(response)
-            return response
+        gate.reserve()
+        if not retryable:
+            request = requests.Request(method, url, headers=headers, json=data)
+            prepared = session.prepare_request(request)
+            adapter = HTTPAdapter(max_retries=False)
+            response = adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
+        else:
+            response = session.request(
+                method,
+                url,
+                headers=headers,
+                json=data,
+                timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+            )
+        gate.observe(response)
+        return response
 
 
 def _configure_session(session: Session) -> Session:
