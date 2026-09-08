@@ -68,7 +68,7 @@ python -m app.cli.generate_descriptor
 - `APP_BASE_URL` (`required`)
 - `SESSION_SECRET` (`required`)
 - `PORT` (`optional`, default: `8080`)
-- `GUNICORN_THREADS` (`optional`, default: `20`; позволяет backend параллельно обслуживать запросы проверки ретраев)
+- `GUNICORN_THREADS` (`optional`, default: `5`; JSON API разрешает не более 5 параллельных запросов от пользователя, поэтому число потоков ограничивает и параллельность обращений к API)
 - `LOG_LEVEL` (`optional`, default: `DEBUG`)
 - `MOYSKLAD_VENDOR_API_ENDPOINT_URL` (`optional`, default: `https://apps-api.moysklad.ru/api/vendor/1.0`)
 - `MOYSKLAD_JSON_API_ENDPOINT_URL` (`optional`, default: `https://api.moysklad.ru/api/remap/1.2`)
