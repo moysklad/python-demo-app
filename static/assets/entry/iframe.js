@@ -120,7 +120,13 @@
 
       try {
         showProgress();
-        await Promise.all(Array.from({ length: requestCount }, async function () {
+        const staggerMs = 30;
+        await Promise.all(Array.from({ length: requestCount }, async function (_unused, index) {
+          if (index > 0) {
+            await new Promise(function (resolve) {
+              window.setTimeout(resolve, index * staggerMs);
+            });
+          }
           const body = new FormData(retryTestForm);
           body.delete("requestCount");
 

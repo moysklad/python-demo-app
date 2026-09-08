@@ -16,7 +16,7 @@ from urllib3.exceptions import MaxRetryError
 from urllib3.util import Retry
 
 DEFAULT_HTTP_TIMEOUT_SECONDS = 30
-DEFAULT_HTTP_MAX_RETRIES = 2
+DEFAULT_HTTP_MAX_RETRIES = 10
 DEFAULT_HTTP_RETRY_BASE_SECONDS = 0.25
 LOGNEX_RETRY_AFTER_HEADER = "X-Lognex-Retry-After"
 LOGNEX_RETRY_INTERVAL_HEADER = "X-Lognex-Retry-TimeInterval"
