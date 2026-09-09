@@ -318,6 +318,9 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     assert 'id="settingsForm"' in html
     assert 'data-update-url="/utils/update-settings"' in html
     assert 'id="settingsResult"' in html
+    assert 'id="retryTestForm"' in html
+    assert 'data-test-url="/utils/stores"' in html
+    assert 'id="retryTestResult"' in html
     assert 'id="appStatus"' in html
     assert 'id="appStatusTitle"' in html
     assert 'id="appStatusDetails"' in html
@@ -361,6 +364,96 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
 
     assert object_response.status_code == 200
     assert object_response.get_data(as_text=True) == "Заказ покупателя Документ"
+    assert object_response.headers.get("Set-Cookie") is None
+
+
+def test_store_request_returns_retry_count(app_config):
+    json_api_factory = FakeJsonApiFactory()
+    json_api_factory.api.stores_retries = 2
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=json_api_factory,
+    )
+    client = app.test_client()
+    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
+
+    assert nonce_match is not None
+    response = client.post(
+        "/utils/stores",
+        data={"contextNonce": nonce_match.group(1)},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "message": "Запрос выполнен",
+        "success": True,
+        "retries": 2,
+    }
+    assert response.headers.get("Set-Cookie") is None
+
+
+def test_store_request_returns_upstream_failure_with_retry_count(app_config):
+    json_api_factory = FakeJsonApiFactory()
+    json_api_factory.api.stores_successful = False
+    json_api_factory.api.stores_retries = 2
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=json_api_factory,
+    )
+    client = app.test_client()
+    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
+
+    assert nonce_match is not None
+    response = client.post(
+        "/utils/stores",
+        data={"contextNonce": nonce_match.group(1)},
+    )
+
+    assert response.status_code == 502
+    assert response.get_json() == {
+        "message": "Не удалось получить список складов",
+        "success": False,
+        "retries": 2,
+    }
+
+
+def test_store_request_is_available_only_to_admin(app_config):
+    vendor_api = FakeVendorApi()
+    vendor_api.context_response["permissions"]["admin"]["view"] = "NO"
+    json_api_factory = FakeJsonApiFactory()
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=vendor_api,
+        json_api_factory=json_api_factory,
+    )
+    client = app.test_client()
+    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    entry_html = entry_response.get_data(as_text=True)
+    nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_html)
+
+    assert 'id="retryTestForm"' not in entry_html
+    assert nonce_match is None
+
+    with client.session_transaction() as session_data:
+        context_nonce = session_data["userContext"]["contextNonce"]
+
+    response = client.post(
+        "/utils/stores",
+        data={"contextNonce": context_nonce},
+    )
+
+    assert response.status_code == 403
+    assert response.get_data(as_text=True) == "Недостаточно прав"
 
 
 def test_update_settings_sets_settings_required_without_store(app_config):

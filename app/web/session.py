@@ -4,7 +4,7 @@ import secrets
 import time
 from typing import Any
 
-from flask import Flask, Request, Response, request
+from flask import Flask, Request, Response
 from flask.sessions import SessionInterface, SessionMixin
 from itsdangerous import BadSignature, URLSafeSerializer
 from werkzeug.datastructures import CallbackDict
@@ -56,7 +56,7 @@ class SqliteSessionInterface(SessionInterface):
                 response.delete_cookie(self._config.session_name, path=cookie_path)
             return
 
-        if request.endpoint == "static" and not session.modified:
+        if not session.modified:
             return
 
         expires_at_ms = int(time.time() * 1000) + USER_CONTEXT_SESSION_TTL_SECONDS * 1000

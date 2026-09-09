@@ -20,6 +20,15 @@ class JsonApi:
             service_name="json-api",
         )
 
+    def stores_with_retries(self) -> tuple[dict[str, Any] | None, int]:
+        stores, retries = self._http_client.request_json_with_retries(
+            "GET",
+            f"{self._config.moysklad_json_api_endpoint_url}/entity/store",
+            self._access_token,
+            service_name="json-api",
+        )
+        return stores if isinstance(stores, dict) else None, retries
+
     def store_names(self) -> list[str]:
         stores = self.stores()
         rows = stores.get("rows") if isinstance(stores, dict) else None

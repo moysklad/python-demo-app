@@ -13,6 +13,7 @@ from app.integrations.vendor_api import VendorApi
 # backend-подзапросы авторизуются через contextNonce, привязанный к server-side session.
 USER_CONTEXT_SESSION_KEY = "userContext"
 USER_CONTEXT_SESSION_TTL_SECONDS = 7200
+USER_CONTEXT_SESSION_REFRESH_INTERVAL_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -61,7 +62,11 @@ class UserContextService:
             is_admin=check_is_admin(employee),
         )
 
-    def resolve_backend_context(self, session_data: MutableMapping[str, Any], context_nonce: str | None) -> ResolvedBackendAuthContext | None:
+    def resolve_backend_context(
+        self,
+        session_data: MutableMapping[str, Any],
+        context_nonce: str | None,
+    ) -> ResolvedBackendAuthContext | None:
         if context_nonce is None:
             return None
 
@@ -150,10 +155,16 @@ def load_active_user_context_from_session(
 def refresh_active_user_context_in_session(
     session_data: MutableMapping[str, Any],
     context: UserContextSessionEntry,
-):
+) -> None:
     now = int(time.time() * 1000)
+    refresh_at = context.expires_at - (
+        USER_CONTEXT_SESSION_TTL_SECONDS - USER_CONTEXT_SESSION_REFRESH_INTERVAL_SECONDS
+    ) * 1000
+    if now < refresh_at:
+        return
+
     # TTL скользящий: он обновляется только после успешной проверки nonce,
-    # чтобы не продлевать контекст на неавторизованных запросах.
+    # но не чаще заданного интервала, чтобы не записывать сессию на каждый запрос.
     refreshed = UserContextSessionEntry(
         uid=context.uid,
         fio=context.fio,

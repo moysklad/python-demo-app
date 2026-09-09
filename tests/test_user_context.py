@@ -6,6 +6,7 @@ from app.services.user_context import (
     load_active_user_context_from_session,
     save_active_user_context_to_session,
 )
+from app.web.session import ServerSideSession
 
 from tests.conftest import FakeVendorApi
 
@@ -125,6 +126,53 @@ def test_resolve_backend_context_refreshes_ttl_for_valid_nonce(monkeypatch):
     assert resolved is not None
     assert resolved.uid == "user-1"
     assert session["userContext"]["expiresAt"] == 8200000
+
+
+def test_resolve_backend_context_throttles_ttl_refresh(monkeypatch):
+    monkeypatch.setattr("app.services.user_context.time.time", lambda: 1000.0)
+    service = UserContextService(FakeVendorApi())
+    session = {
+        "userContext": {
+            "uid": "user-1",
+            "fio": "Иванов И.",
+            "accountId": "account-1",
+            "isAdmin": True,
+            "contextNonce": "nonce-1",
+            "createdAt": 1000000,
+            "expiresAt": 8200000,
+        }
+    }
+
+    resolved = service.resolve_backend_context(session, "nonce-1")
+
+    assert resolved is not None
+    assert session["userContext"]["expiresAt"] == 8200000
+
+
+def test_resolve_backend_context_marks_session_modified_only_when_ttl_is_refreshed(monkeypatch):
+    service = UserContextService(FakeVendorApi())
+    session = ServerSideSession(
+        {
+            "userContext": {
+                "uid": "user-1",
+                "fio": "Иванов И.",
+                "accountId": "account-1",
+                "isAdmin": True,
+                "contextNonce": "nonce-1",
+                "createdAt": 0,
+                "expiresAt": 7200000,
+            }
+        }
+    )
+
+    monkeypatch.setattr("app.services.user_context.time.time", lambda: 100.0)
+    assert service.resolve_backend_context(session, "nonce-1") is not None
+    assert session.modified is False
+
+    monkeypatch.setattr("app.services.user_context.time.time", lambda: 300.0)
+    assert service.resolve_backend_context(session, "nonce-1") is not None
+    assert session.modified is True
+    assert session["userContext"]["expiresAt"] == 7500000
 
 
 def test_expired_active_context_is_removed_from_session():

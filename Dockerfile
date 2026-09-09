@@ -27,4 +27,4 @@ EXPOSE 8080
 
 VOLUME ["/app/tmp/data"]
 
-CMD ["sh", "-c", "gunicorn 'app:create_app()' --bind 0.0.0.0:${PORT}"]
+CMD ["sh", "-c", "gunicorn 'app:create_app()' --bind 0.0.0.0:${PORT} --threads ${GUNICORN_THREADS:-5}"]

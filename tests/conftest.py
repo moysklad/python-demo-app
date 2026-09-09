@@ -49,12 +49,18 @@ class FakeVendorApi:
 class FakeJsonApi:
     def __init__(self) -> None:
         self.object_response: dict[str, Any] | None = {"id": "object-1", "name": "Документ"}
+        self.stores_successful = True
+        self.stores_retries = 0
 
     def store_names(self) -> list[str]:
         return ["Основной склад"]
 
     def get_object(self, entity: str, object_id: str) -> dict[str, Any] | None:
         return self.object_response
+
+    def stores_with_retries(self) -> tuple[dict[str, Any] | None, int]:
+        stores = {"rows": []} if self.stores_successful else None
+        return stores, self.stores_retries
 
 
 class FakeJsonApiFactory:
