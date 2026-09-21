@@ -282,7 +282,8 @@ class HttpClient:
         if retryable is False:
             return self._send_once(session, method, url, headers=headers, data=data, retryable=False, gate=gate)
 
-        retries = _build_retries()
+        # Adapter handles transport retries only. This loop owns X-Lognex-Retry-After.
+        retries = _build_lognex_retries()
         while True:
             response = self._send_once(session, method, url, headers=headers, data=data, retryable=True, gate=gate)
             retry_view = _RetryAfterView(response)
@@ -337,7 +338,7 @@ class HttpClient:
 
 
 def _configure_session(session: Session) -> Session:
-    retry_adapter = HTTPAdapter(max_retries=_build_retries())
+    retry_adapter = HTTPAdapter(max_retries=_build_transport_retries())
     session.mount("http://", retry_adapter)
     session.mount("https://", retry_adapter)
     return session
@@ -367,7 +368,21 @@ def _decode_json_result(
         return None
 
 
-def _build_retries() -> LognexRetry:
+def _build_transport_retries() -> Retry:
+    """Retry connection/read failures in urllib3. Do not retry HTTP 429 here."""
+    return Retry(
+        total=DEFAULT_HTTP_MAX_RETRIES,
+        connect=DEFAULT_HTTP_MAX_RETRIES,
+        read=DEFAULT_HTTP_MAX_RETRIES,
+        status=0,
+        backoff_factor=DEFAULT_HTTP_RETRY_BASE_SECONDS,
+        raise_on_status=False,
+        respect_retry_after_header=False,
+        status_forcelist=(),
+    )
+
+
+def _build_lognex_retries() -> LognexRetry:
     return LognexRetry(
         total=DEFAULT_HTTP_MAX_RETRIES,
         backoff_factor=DEFAULT_HTTP_RETRY_BASE_SECONDS,

@@ -6,6 +6,7 @@
 - Активация и деактивация решения через Vendor API
 - Генерация `descriptor.xml` для публикации в каталоге
 - Отображение iframe-страницы настроек решения
+- Отображение мобильной iframe-страницы для проверки возможностей WebView
 - Получение контекста пользователя для iframe/виджетов с кешированием в server-side сессии
 - Сохранение настроек решения и обновление статуса во внешнем Vendor API
 - Сохранение пользовательских настроек при приостановке и удалении решения с восстановлением при возобновлении и повторной установке
@@ -90,7 +91,8 @@ python -m app.cli.generate_descriptor
 - `GET /health` — проверка статуса: процесс запущен и готов к работе
 
 Окна и виджеты:
-- `GET /entry/iframe?contextKey=...`
+- `GET /entry/iframe-main?contextKey=...`
+- `GET /entry/iframe-mobile?contextKey=...`
 - `GET /entry/widget-customerorder?contextKey=...`
 - `GET /entry/widget-invoiceout?contextKey=...`
 - `GET /entry/popup`
@@ -132,14 +134,14 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 
 Сохранение настроек при удалении (`Uninstall`) — рекомендация, а не требование. Если политика хранения данных требует удалять данные установки при отключении решения, вызовите в обработчике `Uninstall` метод `AppInstanceRepository.delete()` вместо `uninstall()` — он полностью удаляет строку установки (`app/services/vendor_endpoint.py`, `app/repositories/sqlite.py`).
 
-Повторный `DELETE` для уже удаленной или приостановленной установки возвращает `204 No Content`, как требует Vendor API.
+Повторный `DELETE` идемпотентен: `204 No Content`, если состояние уже соответствует запросу. Первый `Suspend` и `Uninstall` (в том числе после `Suspend`) возвращают `200`, потому что статус установки меняется. Неизвестный `cause` — `400`.
 
 ## Работа с контекстом пользователя
 
 `contextKey` — это opaque-token, который МойСклад передает в URL iframe/виджета при открытии страницы. Приложение не должно разбирать его содержимое или использовать как постоянный идентификатор пользователя.
 
 Последовательность работы:
-- Хост-окно открывает `GET /entry/iframe?contextKey=...` или `GET /entry/widget-...?contextKey=...`.
+- Хост-окно открывает `GET /entry/iframe-...?contextKey=...` или `GET /entry/widget-...?contextKey=...`.
 - Приложение обращается к Vendor API, чтобы получить `uid`, `accountId` и права пользователя.
 - Приложение сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt`.
 - Исходный `contextKey` в сессии не хранится и больше не используется. В шаблоны iframe/виджета передается только `contextNonce`.

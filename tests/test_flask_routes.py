@@ -140,22 +140,75 @@ def test_vendor_endpoint_suspend_then_uninstall_flow(app_config):
         json={"cause": "Suspend"},
     )
     suspended_app = app_repository.load("app-1", "account-1")
-    uninstall_response = client.delete(
-        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
-        headers=vendor_auth_header(app_config.secret_key, jti="jti-uninstall"),
-        json={"cause": "Uninstall"},
-    )
-
-    uninstalled_app = app_repository.load("app-1", "account-1")
 
     assert suspend_response.status_code == 200
     assert suspended_app is not None
     assert suspended_app.status == AppStatus.SUSPENDED
     assert suspended_app.access_token == ""
+
+    repeated_suspend_response = client.delete(
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-suspend-2"),
+        json={"cause": "Suspend"},
+    )
+    assert repeated_suspend_response.status_code == 204
+
+    uninstall_response = client.delete(
+        "/api/moysklad/vendor/1.0/apps/app-1/account-1",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-uninstall"),
+        json={"cause": "Uninstall"},
+    )
+    uninstalled_app = app_repository.load("app-1", "account-1")
+
     assert uninstall_response.status_code == 200
     assert uninstalled_app is not None
     assert uninstalled_app.status == AppStatus.UNINSTALLED
     assert uninstalled_app.access_token == ""
+
+
+def test_vendor_endpoint_delete_is_idempotent(app_config):
+    app_repository = MemoryAppInstanceRepository()
+    app_repository.save(AppInstance("app-1", "account-1", access_token="token", status=AppStatus.ACTIVATED))
+    app = create_app(
+        app_config,
+        app_repository=app_repository,
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    def delete(cause: str, jti: str):
+        return client.delete(
+            "/api/moysklad/vendor/1.0/apps/app-1/account-1",
+            headers=vendor_auth_header(app_config.secret_key, jti=jti),
+            json={"cause": cause},
+        )
+
+    assert delete("Suspend", "jti-suspend-1").status_code == 200
+    assert delete("Suspend", "jti-suspend-2").status_code == 204
+    assert app_repository.load("app-1", "account-1").status == AppStatus.SUSPENDED
+
+    assert delete("Uninstall", "jti-uninstall-1").status_code == 200
+    assert app_repository.load("app-1", "account-1").status == AppStatus.UNINSTALLED
+    assert delete("Uninstall", "jti-uninstall-2").status_code == 204
+    assert app_repository.load("app-1", "account-1").status == AppStatus.UNINSTALLED
+
+    missing = client.delete(
+        "/api/moysklad/vendor/1.0/apps/app-missing/account-missing",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-missing-uninstall"),
+        json={"cause": "Uninstall"},
+    )
+    missing_suspend = client.delete(
+        "/api/moysklad/vendor/1.0/apps/app-missing/account-missing",
+        headers=vendor_auth_header(app_config.secret_key, jti="jti-missing-suspend"),
+        json={"cause": "Suspend"},
+    )
+    assert missing.status_code == 204
+    assert missing_suspend.status_code == 204
+
+    unknown_cause = delete("Pause", "jti-unknown")
+    assert unknown_cause.status_code == 400
 
 
 def test_vendor_endpoint_reinstall_restores_settings(app_config):
@@ -271,7 +324,7 @@ def test_update_settings_redacts_access_token_in_logs(app_config):
     handler = CapturingLogHandler()
     root_logger.addHandler(handler)
     try:
-        entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+        entry_response = client.get("/entry/iframe-main?contextKey=context-key-1")
         nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
         assert nonce_match is not None
 
@@ -308,7 +361,7 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     )
     client = app.test_client()
 
-    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    entry_response = client.get("/entry/iframe-main?contextKey=context-key-1")
     html = entry_response.get_data(as_text=True)
     match = re.search(r'name="contextNonce" value="([^"]+)"', html)
 
@@ -367,6 +420,38 @@ def test_entry_bootstrap_uses_context_nonce_after_context_key_exchange(app_confi
     assert object_response.headers.get("Set-Cookie") is None
 
 
+def test_mobile_iframe_uses_context_nonce_and_webview_controls(app_config):
+    app = create_app(
+        app_config,
+        app_repository=MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=FakeVendorApi(),
+        json_api_factory=FakeJsonApiFactory(),
+    )
+    client = app.test_client()
+
+    response = client.get("/entry/iframe-mobile?contextKey=context-key-1")
+    html = response.get_data(as_text=True)
+    match = re.search(r'name="contextNonce" value="([^"]+)"', html)
+
+    assert response.status_code == 200
+    assert "context-key-1" not in html
+    assert 'name="contextKey"' not in html
+    assert 'data-context-nonce="' in html
+    assert match is not None
+    assert 'href="/assets/entry/iframe-mobile.css"' in html
+    assert 'src="/assets/entry/iframe-mobile.js"' in html
+    assert "WidgetSDK" not in html
+    assert 'id="textInput"' in html
+    assert 'id="textArea"' in html
+    assert 'id="imagePicker"' in html
+    assert 'id="videoPicker"' in html
+    assert 'id="filePicker"' in html
+    assert 'id="cameraPreview"' in html
+    assert 'id="microphoneLevel"' in html
+    assert 'id="locationOutput"' in html
+
+
 def test_store_request_returns_retry_count(app_config):
     json_api_factory = FakeJsonApiFactory()
     json_api_factory.api.stores_retries = 2
@@ -378,7 +463,7 @@ def test_store_request_returns_retry_count(app_config):
         json_api_factory=json_api_factory,
     )
     client = app.test_client()
-    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    entry_response = client.get("/entry/iframe-main?contextKey=context-key-1")
     nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
 
     assert nonce_match is not None
@@ -408,7 +493,7 @@ def test_store_request_returns_upstream_failure_with_retry_count(app_config):
         json_api_factory=json_api_factory,
     )
     client = app.test_client()
-    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    entry_response = client.get("/entry/iframe-main?contextKey=context-key-1")
     nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
 
     assert nonce_match is not None
@@ -437,7 +522,7 @@ def test_store_request_is_available_only_to_admin(app_config):
         json_api_factory=json_api_factory,
     )
     client = app.test_client()
-    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    entry_response = client.get("/entry/iframe-main?contextKey=context-key-1")
     entry_html = entry_response.get_data(as_text=True)
     nonce_match = re.search(r'name="contextNonce" value="([^"]+)"', entry_html)
 
@@ -468,7 +553,7 @@ def test_update_settings_sets_settings_required_without_store(app_config):
     )
     client = app.test_client()
 
-    entry_response = client.get("/entry/iframe?contextKey=context-key-1")
+    entry_response = client.get("/entry/iframe-main?contextKey=context-key-1")
     match = re.search(r'name="contextNonce" value="([^"]+)"', entry_response.get_data(as_text=True))
 
     assert match is not None
@@ -504,7 +589,7 @@ def test_backend_context_rejects_context_key_after_bootstrap(app_config):
     )
     client = app.test_client()
 
-    assert client.get("/entry/iframe?contextKey=context-key-1").status_code == 200
+    assert client.get("/entry/iframe-main?contextKey=context-key-1").status_code == 200
     response = client.post(
         "/utils/update-settings",
         data={"contextKey": "context-key-1", "infoMessage": "hello", "store": "Основной склад"},

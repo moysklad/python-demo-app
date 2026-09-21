@@ -36,6 +36,16 @@ class EntryService:
             "stores_values": stores_values,
         }
 
+    def mobile_iframe_view_model(self, context: UserContextSessionEntry) -> dict[str, object]:
+        return {
+            "account_id": context.account_id,
+            "is_admin": context.is_admin,
+            "access_level": "администратор аккаунта" if context.is_admin else "простой пользователь",
+            "uid": context.uid,
+            "fio": context.fio,
+            "context_nonce": context.context_nonce,
+        }
+
     def widget_view_model(self, entity: str, context: UserContextSessionEntry) -> dict[str, object]:
         return {
             "uid": context.uid,

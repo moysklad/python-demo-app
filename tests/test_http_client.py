@@ -7,7 +7,7 @@ from typing import Any
 
 import requests
 
-from app.integrations.http_client import DEFAULT_HTTP_MAX_RETRIES, HttpClient, LognexRetry
+from app.integrations.http_client import DEFAULT_HTTP_MAX_RETRIES, HttpClient, LognexRetry, _build_transport_retries
 
 
 class QueuedSession(requests.Session):
@@ -191,6 +191,21 @@ def test_http_client_does_not_add_response_rtt_to_reserved_spacing(monkeypatch):
 
     client.request_json("GET", "https://example.test/entity/store", "token")
     assert sleeps == [0.4]
+
+
+def test_session_adapter_retries_transport_errors_not_lognex_429():
+    retries = _build_transport_retries()
+
+    assert retries.respect_retry_after_header is False
+    assert retries.status == 0
+    assert retries.status_forcelist == frozenset() or retries.status_forcelist == ()
+    assert not retries.is_retry("GET", 429, has_retry_after=True)
+
+    session = requests.Session()
+    client = HttpClient(session)
+    adapter = client._session_for_current_thread().get_adapter("https://example.test")
+    assert adapter.max_retries.respect_retry_after_header is False
+    assert adapter.max_retries.status == 0
 
 
 def test_lognex_retry_reads_vendor_header_as_milliseconds():

@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Python Demo App mobile WebView</title>
+    <link rel="stylesheet" href="/assets/entry/iframe-mobile.css">
+    <script defer src="/assets/entry/iframe-mobile.js"></script>
+</head>
+<body>
+<main class="mobile-page" data-context-nonce="{{ context_nonce }}">
+    <section class="hero-card">
+        <p class="eyebrow">Mobile iframe</p>
+        <h1>Проверка WebView</h1>
+        <p class="muted">
+            Страница открыта с серверным контекстом пользователя и набором проверок возможностей мобильного браузера.
+        </p>
+        <dl class="context-grid" aria-label="Контекст пользователя">
+            <div>
+                <dt>Пользователь</dt>
+                <dd>{{ uid }} ({{ fio }})</dd>
+            </div>
+            <div>
+                <dt>Аккаунт</dt>
+                <dd>{{ account_id }}</dd>
+            </div>
+            <div>
+                <dt>Доступ</dt>
+                <dd>{{ access_level }}</dd>
+            </div>
+        </dl>
+        <input type="hidden" name="contextNonce" value="{{ context_nonce }}">
+    </section>
+
+    <section class="capability-card" data-capability="text">
+        <div class="card-heading">
+            <div>
+                <p class="eyebrow">Ввод текста</p>
+                <h2>Клавиатура и буфер обмена</h2>
+            </div>
+            <span class="badge" data-support="clipboard">Проверяется</span>
+        </div>
+        <label for="textInput">Однострочное поле</label>
+        <input id="textInput" type="text" autocomplete="off" inputmode="text" placeholder="Введите текст с мобильной клавиатуры">
+        <label for="textArea">Многострочное поле / вставка</label>
+        <textarea id="textArea" placeholder="Вставьте текст вручную или через кнопку чтения буфера"></textarea>
+        <div class="actions">
+            <button class="btn" type="button" data-action="copy-text">Скопировать текст</button>
+            <button class="btn secondary" type="button" data-action="read-clipboard">Прочитать буфер</button>
+        </div>
+        <p class="status" id="clipboardStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="capability-card" data-capability="media-files">
+        <div class="card-heading">
+            <div>
+                <p class="eyebrow">Медиа</p>
+                <h2>Изображения, видео и файлы</h2>
+            </div>
+            <span class="badge" data-support="file">Проверяется</span>
+        </div>
+        <label for="imagePicker">Выберите изображение</label>
+        <input id="imagePicker" type="file" accept="image/*">
+        <img id="imagePreview" class="preview-image" alt="Предпросмотр выбранного изображения" hidden>
+
+        <label for="videoPicker">Выберите видео</label>
+        <input id="videoPicker" type="file" accept="video/*">
+        <video id="videoPreview" class="preview-video" controls playsinline hidden></video>
+
+        <label for="filePicker">Выберите файлы для проверки загрузки из WebView</label>
+        <input id="filePicker" type="file" multiple>
+        <ul id="fileList" class="file-list" aria-live="polite"></ul>
+
+        <button class="btn" type="button" data-action="download-file">Скачать тестовый файл</button>
+        <p class="status" id="fileStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="capability-card" data-capability="camera">
+        <div class="card-heading">
+            <div>
+                <p class="eyebrow">Камера</p>
+                <h2>Видео с камеры</h2>
+            </div>
+            <span class="badge" data-support="camera">Проверяется</span>
+        </div>
+        <video id="cameraPreview" class="preview-video camera-preview" autoplay playsinline muted hidden></video>
+        <div class="actions">
+            <button class="btn" type="button" data-action="start-camera">Включить камеру</button>
+            <button class="btn secondary" type="button" data-action="stop-camera">Остановить</button>
+        </div>
+        <p class="status" id="cameraStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="capability-card" data-capability="microphone">
+        <div class="card-heading">
+            <div>
+                <p class="eyebrow">Микрофон</p>
+                <h2>Разрешение и уровень сигнала</h2>
+            </div>
+            <span class="badge" data-support="microphone">Проверяется</span>
+        </div>
+        <div class="meter" aria-label="Уровень микрофона">
+            <div id="microphoneLevel"></div>
+        </div>
+        <div class="actions">
+            <button class="btn" type="button" data-action="start-microphone">Включить микрофон</button>
+            <button class="btn secondary" type="button" data-action="stop-microphone">Остановить</button>
+        </div>
+        <p class="status" id="microphoneStatus" role="status" aria-live="polite"></p>
+    </section>
+
+    <section class="capability-card" data-capability="geolocation">
+        <div class="card-heading">
+            <div>
+                <p class="eyebrow">Геолокация</p>
+                <h2>Координаты устройства</h2>
+            </div>
+            <span class="badge" data-support="geolocation">Проверяется</span>
+        </div>
+        <button class="btn" type="button" data-action="get-location">Получить координаты</button>
+        <pre id="locationOutput" class="output" aria-live="polite"></pre>
+        <p class="status" id="locationStatus" role="status" aria-live="polite"></p>
+    </section>
+</main>
+</body>
+</html>

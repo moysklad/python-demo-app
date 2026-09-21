@@ -8,10 +8,10 @@ def build_descriptor_xml(config: AppConfig) -> str:
 <ServerApplication xmlns="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2 https://apps-api.moysklad.ru/xml/ns/appstore/app/v2/application-v2.xsd">
-    <iframe>
-        <sourceUrl>{config.app_base_url}/entry/iframe</sourceUrl>
-        <expand>true</expand>
-    </iframe>
+    <iframes>
+        <iframe type="main" sourceUrl="{config.app_base_url}/entry/iframe-main"/>
+        <iframe type="mobile" sourceUrl="{config.app_base_url}/entry/iframe-mobile"/>
+    </iframes>
     <vendorApi>
         <endpointBase>{config.app_base_url}</endpointBase>
     </vendorApi>
