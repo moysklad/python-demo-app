@@ -34,14 +34,42 @@ def register_routes(app: Flask, services: Any) -> None:
 
     @app.get("/entry/iframe-main")
     def iframe_main():
-        # Entry routes - единственное место, где приложение принимает contextKey
-        # из URL хост-окна. После загрузки страницы contextKey заменяется на
-        # contextNonce, который проверяется только вместе с server-side session.
-        context = _load_entry_context(services)
-        return render_template("entry/iframe.html", **services.entry_service.iframe_view_model(context))
+        return render_template("entry/iframe.html")
+
+    @app.post("/entry/user-context")
+    def user_context():
+        body = request.get_json(silent=True) if request.is_json else None
+        if not isinstance(body, dict):
+            raise WebError("token обязателен и передается только в JSON body", 400)
+
+        token = _trimmed_string(body.get("token"))
+        if token is None:
+            raise WebError("token обязателен", 400)
+
+        outcome = services.user_context_service.exchange_for_entry(session, token)
+        if outcome.context is None or outcome.user is None:
+            payload: dict[str, Any] = {"message": "Не удалось получить контекст пользователя"}
+            if outcome.error_code:
+                payload["code"] = outcome.error_code
+            return _json_response(payload, outcome.status_code)
+
+        response: dict[str, Any] = {
+            "user": {
+                "accountId": outcome.user.account_id,
+                "userId": outcome.user.user_id,
+                "userUid": outcome.user.user_uid,
+                "role": outcome.user.role,
+                "isAdmin": outcome.context.is_admin,
+            },
+            "contextNonce": outcome.context.context_nonce,
+        }
+        if body.get("page") == "iframe":
+            response["pageData"] = services.entry_service.iframe_page_data(outcome.context)
+        return _json_response(response, 200)
 
     @app.get("/entry/iframe-mobile")
     def iframe_mobile():
+        # Мобильный хост не поддерживает протокол user-context, сессия поднимается по contextKey из URL.
         context = _load_entry_context(services)
         return render_template("entry/iframe_mobile.html", **services.entry_service.mobile_iframe_view_model(context))
 
@@ -113,8 +141,7 @@ def _render_widget(services: Any, entity: str) -> str:
     if not is_supported_entity(entity):
         raise WebError("Unsupported entity", 400)
 
-    context = _load_entry_context(services)
-    return render_template("entry/widget.html", **services.entry_service.widget_view_model(entity, context))
+    return render_template("entry/widget.html", **services.entry_service.widget_view_model(entity))
 
 
 def _load_entry_context(services: Any) -> Any:

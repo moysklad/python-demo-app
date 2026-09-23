@@ -270,3 +270,7 @@ textarea {
     min-height: 76px;
   }
 }
+
+#bootstrapStatus.is-error {
+  color: #b3261e;
+}

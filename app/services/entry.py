@@ -14,7 +14,7 @@ class EntryService:
         self._app_repository = app_repository
         self._json_api_factory = json_api_factory
 
-    def iframe_view_model(self, context: UserContextSessionEntry) -> dict[str, object]:
+    def iframe_page_data(self, context: UserContextSessionEntry) -> dict[str, object]:
         app = self._load_app(context.account_id)
         stores_values: list[str] = []
         if context.is_admin:
@@ -22,18 +22,20 @@ class EntryService:
 
         is_settings_required = app.status != AppStatus.ACTIVATED
         return {
-            "account_id": context.account_id,
-            "is_admin": context.is_admin,
-            "access_level": "администратор аккаунта" if context.is_admin else "простой пользователь",
+            "accountId": context.account_id,
+            "isAdmin": context.is_admin,
+            "accessLevel": "администратор аккаунта" if context.is_admin else "простой пользователь",
             "uid": context.uid,
             "fio": context.fio,
-            "context_nonce": context.context_nonce,
-            "info_message": app.info_message,
-            "store": app.store,
-            "status_class": "status-required" if is_settings_required else "status-ready",
-            "status_title": "ТРЕБУЕТСЯ НАСТРОЙКА" if is_settings_required else "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
-            "show_status_details": not is_settings_required,
-            "stores_values": stores_values,
+            "contextNonce": context.context_nonce,
+            "storesValues": stores_values,
+            "status": {
+                "className": "status-required" if is_settings_required else "status-ready",
+                "title": "ТРЕБУЕТСЯ НАСТРОЙКА" if is_settings_required else "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
+                "showDetails": not is_settings_required,
+                "infoMessage": app.info_message or "",
+                "store": app.store or "",
+            },
         }
 
     def mobile_iframe_view_model(self, context: UserContextSessionEntry) -> dict[str, object]:
@@ -46,11 +48,8 @@ class EntryService:
             "context_nonce": context.context_nonce,
         }
 
-    def widget_view_model(self, entity: str, context: UserContextSessionEntry) -> dict[str, object]:
+    def widget_view_model(self, entity: str) -> dict[str, object]:
         return {
-            "uid": context.uid,
-            "fio": context.fio,
-            "context_nonce": context.context_nonce,
             "get_object_url": f"/utils/get-object?entity={quote(entity, safe='')}",
         }
 

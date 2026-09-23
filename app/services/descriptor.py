@@ -9,7 +9,11 @@ def build_descriptor_xml(config: AppConfig) -> str:
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                    xsi:schemaLocation="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2 https://apps-api.moysklad.ru/xml/ns/appstore/app/v2/application-v2.xsd">
     <iframes>
-        <iframe type="main" sourceUrl="{config.app_base_url}/entry/iframe-main"/>
+        <iframe type="main" sourceUrl="{config.app_base_url}/entry/iframe-main" useContextKey="false">
+            <uses>
+                <user-context/>
+            </uses>
+        </iframe>
         <iframe type="mobile" sourceUrl="{config.app_base_url}/entry/iframe-mobile"/>
     </iframes>
     <vendorApi>
@@ -20,7 +24,7 @@ def build_descriptor_xml(config: AppConfig) -> str:
         <scope>admin</scope>
     </access>
     <widgets>
-        <document.customerorder.edit>
+        <document.customerorder.edit useContextKey="false">
             <sourceUrl>{config.app_base_url}/entry/widget-customerorder</sourceUrl>
             <height>
                 <fixed>525px</fixed>
@@ -38,9 +42,10 @@ def build_descriptor_xml(config: AppConfig) -> str:
                 <good-folder-selector/>
                 <standard-dialogs/>
                 <navigation-service/>
+                <user-context/>
             </uses>
         </document.customerorder.edit>
-        <document.invoiceout.edit>
+        <document.invoiceout.edit useContextKey="false">
             <sourceUrl>{config.app_base_url}/entry/widget-invoiceout</sourceUrl>
             <height>
                 <fixed>525px</fixed>
@@ -58,6 +63,7 @@ def build_descriptor_xml(config: AppConfig) -> str:
                 <good-folder-selector/>
                 <standard-dialogs/>
                 <navigation-service/>
+                <user-context/>
             </uses>
         </document.invoiceout.edit>
     </widgets>

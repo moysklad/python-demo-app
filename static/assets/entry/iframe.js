@@ -7,6 +7,12 @@
     sdk.autoResizeIframe();
   }
 
+  const bootstrapPanel = document.getElementById("bootstrapPanel");
+  const bootstrapStatus = document.getElementById("bootstrapStatus");
+  const userPanel = document.getElementById("userPanel");
+  const settingsPanel = document.getElementById("settingsPanel");
+  const adminSettings = document.getElementById("adminSettings");
+  const settingsRestricted = document.getElementById("settingsRestricted");
   const form = document.getElementById("settingsForm");
   const result = document.getElementById("settingsResult");
   const statusBox = document.getElementById("appStatus");
@@ -21,6 +27,91 @@
 
   const submitButton = form.querySelector('button[type="submit"]');
   const defaultButtonText = submitButton ? submitButton.textContent : "";
+
+  function showBootstrapError(message) {
+    if (bootstrapStatus) {
+      bootstrapStatus.textContent = message;
+      bootstrapStatus.classList.remove("muted");
+      bootstrapStatus.classList.add("is-error");
+    }
+  }
+
+  async function initializeUserContext() {
+    if (!sdk || typeof sdk.requestUserContextToken !== "function") {
+      showBootstrapError("JS Widget SDK не загружен, контекст пользователя недоступен.");
+      return;
+    }
+
+    let token = null;
+    try {
+      token = await sdk.requestUserContextToken();
+    } catch (error) {
+      const details = error && error.message ? error.message : String(error);
+      showBootstrapError(`Не удалось запросить контекст пользователя у хоста: ${details}`);
+      return;
+    }
+
+    const request = new Request("/entry/user-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, page: "iframe" }),
+      credentials: "same-origin",
+    });
+    token = null;
+
+    let response;
+    let payload = null;
+    try {
+      response = await fetch(request);
+      payload = await response.json().catch(() => null);
+    } catch (_error) {
+      showBootstrapError("Не удалось отправить контекст на сервер приложения.");
+      return;
+    }
+
+    if (!response.ok || !payload || !payload.pageData) {
+      const code = payload && payload.code ? ` (код ${payload.code})` : "";
+      showBootstrapError(`Не удалось получить контекст пользователя: HTTP ${response.status}${code}.`);
+      return;
+    }
+
+    renderPage(payload.pageData);
+  }
+
+  function renderPage(pageData) {
+    document.getElementById("userUid").textContent = pageData.fio ? `${pageData.uid} (${pageData.fio})` : pageData.uid;
+    document.getElementById("userAccountId").textContent = pageData.accountId;
+    document.getElementById("userAccessLevel").textContent = pageData.accessLevel;
+    updateStatus(pageData.status);
+
+    if (pageData.isAdmin) {
+      const storeSelect = document.getElementById("store");
+      storeSelect.innerHTML = "";
+      const currentStore = pageData.status ? pageData.status.store : "";
+      const stores = Array.isArray(pageData.storesValues) ? pageData.storesValues.slice() : [];
+      if (currentStore && !stores.includes(currentStore)) {
+        stores.unshift(currentStore);
+      }
+      stores.forEach(function (value) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === currentStore;
+        storeSelect.append(option);
+      });
+      document.getElementById("infoMessage").value = pageData.status ? pageData.status.infoMessage : "";
+      document.querySelectorAll('input[name="contextNonce"]').forEach(function (input) {
+        input.value = pageData.contextNonce;
+      });
+      adminSettings.hidden = false;
+    } else {
+      settingsRestricted.hidden = false;
+    }
+
+    bootstrapPanel.hidden = true;
+    userPanel.hidden = false;
+    settingsPanel.hidden = false;
+  }
 
   function setResult(message, kind) {
     result.textContent = message;
@@ -164,4 +255,6 @@
       }
     });
   }
+
+  initializeUserContext();
 })();

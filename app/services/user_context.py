@@ -5,11 +5,11 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, MutableMapping
 
-from app.integrations.vendor_api import VendorApi
+from app.integrations.vendor_api import VendorApi, VendorApiUserContext
 
 
 # В демо используется модель "один активный пользовательский контекст на browser session".
-# contextKey нужен только для начальной загрузки entry-страницы из МоегоСклада, а дальше
+# Одноразовый токен из requestUserContextToken() нужен только чтобы поднять сессию, а дальше
 # backend-подзапросы авторизуются через contextNonce, привязанный к server-side session.
 USER_CONTEXT_SESSION_KEY = "userContext"
 USER_CONTEXT_SESSION_TTL_SECONDS = 7200
@@ -34,17 +34,40 @@ class ResolvedBackendAuthContext:
     is_admin: bool
 
 
+@dataclass(frozen=True)
+class UserContextExchangeOutcome:
+    context: UserContextSessionEntry | None = None
+    user: VendorApiUserContext | None = None
+    status_code: int = 200
+    error_code: str | None = None
+
+
 class UserContextService:
     def __init__(self, vendor_api: VendorApi) -> None:
         self._vendor_api = vendor_api
+
+    def exchange_for_entry(self, session_data: MutableMapping[str, Any], token: str) -> UserContextExchangeOutcome:
+        result = self._vendor_api.exchange_user_context(token)
+        if not result.ok or result.data is None:
+            return UserContextExchangeOutcome(
+                status_code=_to_client_exchange_status(result.status_code),
+                error_code=result.error_code,
+            )
+
+        user = result.data
+        context = save_active_user_context_to_session(
+            session_data,
+            uid=user.user_uid,
+            fio="",
+            account_id=user.account_id,
+            is_admin=role_to_is_admin(user.role),
+        )
+        return UserContextExchangeOutcome(context=context, user=user)
 
     def load_for_entry(self, session_data: MutableMapping[str, Any], context_key: str | None) -> UserContextSessionEntry | None:
         if context_key is None:
             return None
 
-        # contextKey - opaque-token от хост-окна. Его не сохраняем в сессии и не
-        # прокидываем дальше в шаблоны: он используется только для запроса контекста
-        # пользователя во внешнем Vendor API.
         employee = self._vendor_api.get_context(context_key)
         if not employee or not employee.get("accountId") or not employee.get("uid"):
             return None
@@ -86,6 +109,17 @@ class UserContextService:
             return None
 
         return ResolvedBackendAuthContext(account_id=account_id, uid=uid, is_admin=context.is_admin)
+
+
+def role_to_is_admin(role: str) -> bool:
+    return role == "admin"
+
+
+def _to_client_exchange_status(status_code: int) -> int:
+    # 401 от Zeus означает битый vendorJWT решения, а не ошибку пользователя.
+    if status_code == 401:
+        return 502
+    return status_code if 400 <= status_code <= 599 else 502
 
 
 def normalize_is_admin(raw_is_admin: Any) -> bool:
