@@ -119,26 +119,32 @@ class VendorEndpointService:
         :param body: тело запроса
         :return: статус обработки
         """
-        app = self._app_repository.load(app_id, account_id) or AppInstance(app_id, account_id)
-        if not app.is_installed():
-            logger.info("App appId=%s not installed on accountId=%s", app_id, account_id)
-            return ServiceResponse(status_code=204)
-
         cause = body.get("cause")
+        if cause not in {"Uninstall", "Suspend"}:
+            return ServiceResponse(status_code=400, text_body="Invalid delete request")
+
+        app = self._app_repository.load(app_id, account_id) or AppInstance(app_id, account_id)
+
         if cause == "Uninstall":
+            if app.status in {AppStatus.UNKNOWN, AppStatus.UNINSTALLED}:
+                logger.info("App appId=%s already uninstalled on accountId=%s", app_id, account_id)
+                return ServiceResponse(status_code=204)
+
             # Решение удалено с аккаунта. Пользовательские настройки сохраняем, чтобы при повторной
             # установке не заставлять пользователя настраивать решение заново. Если политика хранения
             # данных требует обратного, используйте здесь self._app_repository.delete()
             self._app_repository.uninstall(app_id, account_id)
             logger.info("App appId=%s uninstalled on accountId=%s, settings kept", app_id, account_id)
-        elif cause == "Suspend":
-            app.status = AppStatus.SUSPENDED
-            app.access_token = ""
-            self._app_repository.save(app)
-            logger.info("App appId=%s suspended on accountId=%s", app_id, account_id)
-        else:
-            return ServiceResponse(status_code=400, text_body="Invalid delete request")
+            return ServiceResponse(status_code=200)
 
+        if app.status == AppStatus.SUSPENDED or not app.is_installed():
+            logger.info("App appId=%s already suspended or not installed on accountId=%s", app_id, account_id)
+            return ServiceResponse(status_code=204)
+
+        app.status = AppStatus.SUSPENDED
+        app.access_token = ""
+        self._app_repository.save(app)
+        logger.info("App appId=%s suspended on accountId=%s", app_id, account_id)
         return ServiceResponse(status_code=200)
 
     def app_event(self, app_id: str, account_id: str, body: AdditionalEventBody) -> ServiceResponse:

@@ -32,13 +32,18 @@ def register_routes(app: Flask, services: Any) -> None:
             }
         )
 
-    @app.get("/entry/iframe")
-    def iframe():
+    @app.get("/entry/iframe-main")
+    def iframe_main():
         # Entry routes - единственное место, где приложение принимает contextKey
         # из URL хост-окна. После загрузки страницы contextKey заменяется на
         # contextNonce, который проверяется только вместе с server-side session.
         context = _load_entry_context(services)
         return render_template("entry/iframe.html", **services.entry_service.iframe_view_model(context))
+
+    @app.get("/entry/iframe-mobile")
+    def iframe_mobile():
+        context = _load_entry_context(services)
+        return render_template("entry/iframe_mobile.html", **services.entry_service.mobile_iframe_view_model(context))
 
     @app.get("/entry/widget-customerorder")
     def widget_customerorder():
