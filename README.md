@@ -7,7 +7,7 @@
 - Генерация `descriptor.xml` для публикации в каталоге
 - Отображение iframe-страницы настроек решения
 - Отображение мобильной iframe-страницы для проверки возможностей WebView
-- Получение контекста пользователя для iframe/виджетов с кешированием в server-side сессии
+- Получение контекста пользователя для iframe/виджетов по одноразовому токену из JS Widget SDK с кешированием в server-side сессии
 - Сохранение настроек решения и обновление статуса во внешнем Vendor API
 - Сохранение пользовательских настроек при приостановке и удалении решения с восстановлением при возобновлении и повторной установке
 - Получение данных из JSON API 1.2 по токену установки
@@ -91,11 +91,12 @@ python -m app.cli.generate_descriptor
 - `GET /health` — проверка статуса: процесс запущен и готов к работе
 
 Окна и виджеты:
-- `GET /entry/iframe-main?contextKey=...`
+- `GET /entry/iframe-main`
 - `GET /entry/iframe-mobile?contextKey=...`
-- `GET /entry/widget-customerorder?contextKey=...`
-- `GET /entry/widget-invoiceout?contextKey=...`
+- `GET /entry/widget-customerorder`
+- `GET /entry/widget-invoiceout`
 - `GET /entry/popup`
+- `POST /entry/user-context` — принимает одноразовый токен только в JSON body и поднимает server-side сессию
 
 Backend-запросы из iframe/виджетов:
 - `POST /utils/update-settings` — сохранение настроек из iframe, требует `contextNonce`
@@ -138,15 +139,24 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 
 ## Работа с контекстом пользователя
 
-`contextKey` — это opaque-token, который МойСклад передает в URL iframe/виджета при открытии страницы. Приложение не должно разбирать его содержимое или использовать как постоянный идентификатор пользователя.
+Основной iframe и виджеты используют протокол `user-context`: в дескрипторе у них указаны
+`<uses><user-context/></uses>` и атрибут `useContextKey="false"`, поэтому МойСклад не передает `contextKey` в URL.
 
 Последовательность работы:
-- Хост-окно открывает `GET /entry/iframe-...?contextKey=...` или `GET /entry/widget-...?contextKey=...`.
-- Приложение обращается к Vendor API, чтобы получить `uid`, `accountId` и права пользователя.
-- Приложение сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt`.
-- Исходный `contextKey` в сессии не хранится и больше не используется. В шаблоны iframe/виджета передается только `contextNonce`.
+- Хост-окно открывает `GET /entry/iframe-main` или `GET /entry/widget-...` без параметров. Страница отдается без персональных данных.
+- После загрузки браузер вызывает `requestUserContextToken()` из `@moysklad/js-widget-sdk` (версия 1.3.0 и новее).
+- Одноразовый opaque-токен немедленно помещается в JSON body `{ "token": "..." }` запроса `POST /entry/user-context`. Токен нигде не отображается, браузерная переменная очищается сразу после создания запроса.
+- Backend вызывает `POST {MOYSKLAD_VENDOR_API_ENDPOINT_URL}/context/user` под service JWT. Тело этого запроса в логи не пишется.
+- Zeus возвращает `{accountId, userId, userUid, role}`. Известные роли: `admin`, `cashier`, `worker`, `individual`. Неизвестная роль не ломает обмен: пользователь считается не-админом.
+- Backend сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt` и возвращает UI контекст пользователя, `contextNonce` и, для основного iframe (`"page": "iframe"` в запросе), данные страницы. Токен не сохраняется и не возвращается.
 - Запросы из iframe/виджета (`POST /utils/update-settings`, `POST /utils/get-object`, `POST /utils/stores`) передают `contextNonce`.
 - Backend принимает запрос только если `contextNonce` совпадает с активным контекстом в текущей сессии. Если `contextNonce` отсутствует, устарел или не совпал, возвращается `401`.
+
+`isAdmin` равен `true` только для роли `admin`. ФИО в новом ответе Vendor API нет, поэтому в интерфейсе показывается `uid`.
+
+Ошибки Zeus передаются в UI без тела ответа и без токена: сохраняется HTTP-статус и код ошибки, если он есть. `401` от Zeus (битый service JWT) отдается клиенту как `502`, чтобы не смешивать ошибку решения с ошибкой пользователя. Виджет, получивший `Open` до завершения обмена, откладывает запрос объекта до появления `contextNonce`.
+
+Мобильный iframe (`GET /entry/iframe-mobile?contextKey=...`) получает контекст по `contextKey` из URL: мобильный хост протокол `user-context` не поддерживает. `contextKey` в сессии не хранится и после bootstrap заменяется на `contextNonce`.
 
 Когда меняется `contextNonce`:
 - Если повторно открыть iframe/виджет для того же `uid`, `accountId` и `isAdmin`, то `contextNonce` переиспользуется.
@@ -166,7 +176,7 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 API и интеграции:
 - `app/services/vendor_endpoint.py` — обработка lifecycle событий и button callbacks
 - `app/services/buttons.py` — формирование action-ответов для кнопок
-- `app/integrations/vendor_api.py` — клиент Vendor API (context/status)
+- `app/integrations/vendor_api.py` — клиент Vendor API (обмен токена user-context, context по `contextKey` для мобильного iframe, status)
 - `app/integrations/json_api.py` — клиент JSON API 1.2
 
 UI и entry:
@@ -177,7 +187,7 @@ UI и entry:
 Состояние и безопасность:
 - `app/domain/app_instance.py` — модель состояния установки приложения
 - `app/repositories/sqlite.py` — SQLite-хранение установок, server-side сессий и replay-маркеров JWT
-- `app/services/user_context.py` — bootstrap user context по `contextKey` и проверка backend-запросов по `contextNonce`
+- `app/services/user_context.py` — bootstrap user context по одноразовому токену и проверка backend-запросов по `contextNonce`
 - `app/security/crypto.py` — утилиты шифрования чувствительных данных
 - `app/security/jwt_tools.py` — генерация и проверка service JWT
 

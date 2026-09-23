@@ -52,9 +52,19 @@ class LognexRetry(Retry):
 @dataclass(frozen=True)
 class _HttpResult:
     body: str
+    status_code: int
     attempt: int
     duration_ms: int
     lognex_retries: int
+    successful: bool
+
+
+@dataclass(frozen=True)
+class HttpJsonResponse:
+    """HTTP status and decoded JSON body; `status_code` is `None` on transport errors."""
+
+    status_code: int | None
+    json_body: Any | None
     successful: bool
 
 
@@ -176,6 +186,42 @@ class HttpClient:
         decoded = _decode_json_result(method, url, service_name, result)
         return decoded, result.lognex_retries if result is not None else 0
 
+    def request_json_detailed(
+        self,
+        method: str,
+        url: str,
+        bearer_token: str,
+        data: Any = None,
+        *,
+        service_name: str = "external-api",
+        retryable: bool | None = None,
+        log_body: bool = True,
+    ) -> HttpJsonResponse:
+        """Send an HTTP request and return its status together with the decoded JSON body.
+
+        Unlike `request_json`, non-2xx responses are not collapsed into `None`:
+        the caller sees the status code and the decoded error body, if any.
+        """
+        result = self._request(
+            method,
+            url,
+            bearer_token,
+            data,
+            service_name=service_name,
+            retryable=retryable,
+            log_body=log_body,
+        )
+        if result is None:
+            return HttpJsonResponse(status_code=None, json_body=None, successful=False)
+
+        json_body: Any | None = None
+        if result.body != "":
+            try:
+                json_body = json.loads(result.body)
+            except ValueError:
+                json_body = None
+        return HttpJsonResponse(status_code=result.status_code, json_body=json_body, successful=result.successful)
+
     def execute(
         self,
         method: str,
@@ -211,6 +257,7 @@ class HttpClient:
         *,
         service_name: str,
         retryable: bool | None,
+        log_body: bool = True,
     ) -> _HttpResult | None:
         normalized_method = method.upper()
         request_line = f"{normalized_method} {url}"
@@ -219,7 +266,7 @@ class HttpClient:
             "Accept-Encoding": "gzip",
         }
 
-        _log_debug_request(request_line, service_name, headers, data)
+        _log_debug_request(request_line, service_name, headers, data if log_body else None)
         started_at = time.time()
 
         try:
@@ -248,7 +295,7 @@ class HttpClient:
         body = response.text or ""
         lognex_retries = int(getattr(response, "_lognex_retry_count", 0))
         successful = HTTPStatus.OK <= response.status_code < HTTPStatus.MULTIPLE_CHOICES
-        _log_debug_response(request_line, service_name, response, attempt, duration_ms, body)
+        _log_debug_response(request_line, service_name, response, attempt, duration_ms, body if log_body else "")
 
         if not successful:
             logger.warning(
@@ -262,6 +309,7 @@ class HttpClient:
 
         return _HttpResult(
             body=body,
+            status_code=response.status_code,
             attempt=attempt,
             duration_ms=duration_ms,
             lognex_retries=lognex_retries,

@@ -8,6 +8,7 @@ import jwt
 import pytest
 
 from app.config import AppConfig
+from app.integrations.vendor_api import UserContextExchangeResult, VendorApiUserContext
 
 
 @pytest.fixture
@@ -37,6 +38,16 @@ class FakeVendorApi:
         }
         self.status_updates: list[tuple[str, str, str]] = []
         self.update_status_result = True
+        self.exchange_result = UserContextExchangeResult(
+            ok=True,
+            status_code=200,
+            data=VendorApiUserContext(account_id="account-1", user_id="user-id-1", user_uid="user-1", role="admin"),
+        )
+        self.exchanged_tokens: list[str] = []
+
+    def exchange_user_context(self, token: str) -> UserContextExchangeResult:
+        self.exchanged_tokens.append(token)
+        return self.exchange_result
 
     def get_context(self, context_key: str) -> dict[str, Any] | None:
         return self.context_response

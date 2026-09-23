@@ -151,6 +151,101 @@
 
   sdk.autoResizeIframe();
 
+  const userEl = document.getElementById("user");
+  let contextNonce = "";
+  let pendingObjectId = null;
+
+  // Open может прийти раньше, чем сессия поднимется, поэтому objectId ждет контекст.
+  async function initializeUserContext() {
+    let token = null;
+    try {
+      token = await sdk.requestUserContextToken();
+    } catch (error) {
+      widgetLog("requestUserContextToken error", { message: error.message || String(error), name: error.name });
+      if (userEl) {
+        userEl.textContent = "Контекст пользователя недоступен";
+      }
+      return;
+    }
+
+    const request = new Request("/entry/user-context", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+      credentials: "same-origin"
+    });
+    token = null;
+
+    try {
+      const response = await fetch(request);
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok || !payload || !payload.user) {
+        widgetLog("user context exchange failed", { status: response.status, code: payload && payload.code });
+        if (userEl) {
+          userEl.textContent = "Контекст пользователя недоступен";
+        }
+        return;
+      }
+
+      contextNonce = payload.contextNonce || "";
+      if (userEl) {
+        userEl.textContent = `${payload.user.userUid} (${payload.user.role})`;
+      }
+      widgetLog("user context ready", payload.user);
+
+      if (pendingObjectId) {
+        const objectId = pendingObjectId;
+        pendingObjectId = null;
+        loadObject(objectId);
+      }
+    } catch (error) {
+      widgetLog("user context exchange error", { message: error.message || String(error) });
+      if (userEl) {
+        userEl.textContent = "Контекст пользователя недоступен";
+      }
+    }
+  }
+
+  function loadObject(objectId) {
+    if (!objectEl || !getObjectUrl) {
+      return;
+    }
+
+    if (!contextNonce) {
+      pendingObjectId = objectId;
+      widgetLog("object fetch deferred", { reason: "waiting for user context" });
+      return;
+    }
+
+    fetch(getObjectUrl, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        contextNonce,
+        objectId
+      })
+    })
+      .then(async (response) => {
+        const text = await response.text();
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${text}`);
+        }
+
+        return text;
+      })
+      .then((text) => {
+        objectEl.textContent = text;
+      })
+      .catch((error) => {
+        widgetLog("object fetch error", { message: error.message || String(error) });
+      });
+  }
+
   const maybeAutoOpenFeedback = (openMessage) => {
     const resolvedId = openMessage == null ? undefined : openMessage.messageId;
 
@@ -164,34 +259,9 @@
     widgetLog("Event: Open", message);
     maybeAutoOpenFeedback(message);
 
-    if (objectEl && getObjectUrl && message && message.objectId) {
-      fetch(getObjectUrl, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          contextNonce: root.dataset.contextNonce || "",
-          objectId: message.objectId
-        })
-      })
-        .then(async (response) => {
-          const text = await response.text();
-
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${text}`);
-          }
-
-          return text;
-        })
-        .then((text) => {
-          objectEl.textContent = text;
-        })
-        .catch((error) => {
-          widgetLog("object fetch error", { message: error.message || String(error) });
-        });
-    } else if (!message || !message.objectId) {
+    if (message && message.objectId) {
+      loadObject(message.objectId);
+    } else {
       widgetLog("object fetch skipped", { reason: "missing objectId" });
     }
   });
@@ -319,4 +389,6 @@
     const res = sdk.closePopup({ ok: true });
     widgetLog("closePopup sent", res);
   });
+
+  initializeUserContext();
 }());

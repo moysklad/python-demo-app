@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from app.integrations.vendor_api import UserContextExchangeResult
 from app.services.user_context import (
     UserContextService,
     check_is_admin,
     load_active_user_context_from_session,
+    role_to_is_admin,
     save_active_user_context_to_session,
 )
 from app.web.session import ServerSideSession
@@ -190,3 +192,55 @@ def test_expired_active_context_is_removed_from_session():
 
     assert load_active_user_context_from_session(session) is None
     assert "userContext" not in session
+
+
+def test_exchange_for_entry_saves_context_without_token(monkeypatch):
+    monkeypatch.setattr("app.services.user_context.secrets.token_urlsafe", lambda _: "nonce-1")
+    vendor_api = FakeVendorApi()
+    service = UserContextService(vendor_api)
+    session = {}
+
+    outcome = service.exchange_for_entry(session, "opaque-token-1")
+
+    assert outcome.context is not None
+    assert outcome.user is not None
+    assert outcome.context.uid == "user-1"
+    assert outcome.context.account_id == "account-1"
+    assert outcome.context.is_admin is True
+    assert outcome.context.fio == ""
+    assert session["userContext"]["contextNonce"] == "nonce-1"
+    assert "opaque-token-1" not in str(session)
+    assert vendor_api.exchanged_tokens == ["opaque-token-1"]
+
+
+def test_exchange_for_entry_reuses_nonce_for_same_backend_identity(monkeypatch):
+    tokens = iter(["nonce-1", "nonce-2"])
+    monkeypatch.setattr("app.services.user_context.secrets.token_urlsafe", lambda _: next(tokens))
+    service = UserContextService(FakeVendorApi())
+    session = {}
+
+    first = service.exchange_for_entry(session, "opaque-token-1").context
+    second = service.exchange_for_entry(session, "opaque-token-2").context
+
+    assert first is not None and second is not None
+    assert first.context_nonce == second.context_nonce == "nonce-1"
+
+
+def test_exchange_for_entry_maps_vendor_401_to_502():
+    vendor_api = FakeVendorApi()
+    vendor_api.exchange_result = UserContextExchangeResult(ok=False, status_code=401)
+    service = UserContextService(vendor_api)
+    session = {}
+
+    outcome = service.exchange_for_entry(session, "opaque-token-1")
+
+    assert outcome.context is None
+    assert outcome.status_code == 502
+    assert "userContext" not in session
+
+
+def test_role_to_is_admin_grants_admin_only_to_admin_role():
+    assert role_to_is_admin("admin") is True
+    assert role_to_is_admin("cashier") is False
+    assert role_to_is_admin("worker") is False
+    assert role_to_is_admin("individual") is False
