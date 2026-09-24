@@ -4,6 +4,7 @@ import os
 import re
 import logging
 from dataclasses import dataclass
+from importlib import metadata
 from pathlib import Path
 from typing import Mapping
 
@@ -25,6 +26,13 @@ def configure_logging(level: str) -> None:
     )
     for handler in logging.getLogger().handlers:
         handler.addFilter(SensitiveDataFilter())
+
+
+def app_version() -> str:
+    try:
+        return metadata.version("python-demo-app")
+    except metadata.PackageNotFoundError:
+        return "dev"
 
 
 @dataclass(frozen=True)

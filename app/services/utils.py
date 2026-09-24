@@ -24,6 +24,22 @@ def has_required_settings(app: AppInstance) -> bool:
     return app.store.strip() != ""
 
 
+def describe_app_status(app: AppInstance) -> dict[str, object]:
+    """
+    Состояние решения для карточки статуса в основном iframe
+    :param app: экземпляр установки решения
+    :return: цвет бейджа, заголовок и сохраненные настройки
+    """
+    is_settings_required = app.status != AppStatus.ACTIVATED
+    return {
+        "badge": "orange" if is_settings_required else "green",
+        "title": "Требуется настройка" if is_settings_required else "Решение готово к работе",
+        "showDetails": not is_settings_required,
+        "infoMessage": app.info_message or "",
+        "store": app.store or "",
+    }
+
+
 class UtilsService:
     def __init__(
         self,
@@ -69,19 +85,7 @@ class UtilsService:
             app.store,
         )
 
-        is_settings_required = app.status != AppStatus.ACTIVATED
-        return ServiceResponse(
-            json_body={
-                "message": "Настройки обновлены",
-                "status": {
-                    "className": "status-required" if is_settings_required else "status-ready",
-                    "title": "ТРЕБУЕТСЯ НАСТРОЙКА" if is_settings_required else "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
-                    "showDetails": not is_settings_required,
-                    "infoMessage": app.info_message,
-                    "store": app.store,
-                },
-            }
-        )
+        return ServiceResponse(json_body={"message": "Настройки обновлены", "status": describe_app_status(app)})
 
     def get_object(self, session_data: dict[str, Any], context_nonce: str | None, entity: str, object_id: str) -> ServiceResponse:
         auth_context = self._user_context_service.resolve_backend_context(session_data, context_nonce)

@@ -11,3 +11,5 @@ dist/
 build/
 *.egg-info/
 .idea/
+frontend/node_modules/
+static/assets/app/

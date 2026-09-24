@@ -2,17 +2,27 @@ from __future__ import annotations
 
 from urllib.parse import quote
 
-from app.config import AppConfig
-from app.domain.app_instance import AppInstance, AppInstanceRepository, AppStatus
+from app.config import AppConfig, app_version
+from app.domain.app_instance import AppInstance, AppInstanceRepository
 from app.integrations.json_api import JsonApiFactory
+# [feature:loyalty] программа лояльности: данные вкладки приходят из модуля app/loyalty.
+from app.loyalty.service import LoyaltyService
 from app.services.user_context import UserContextSessionEntry
+from app.services.utils import describe_app_status
 
 
 class EntryService:
-    def __init__(self, config: AppConfig, app_repository: AppInstanceRepository, json_api_factory: JsonApiFactory) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        app_repository: AppInstanceRepository,
+        json_api_factory: JsonApiFactory,
+        loyalty_service: LoyaltyService,
+    ) -> None:
         self._config = config
         self._app_repository = app_repository
         self._json_api_factory = json_api_factory
+        self._loyalty_service = loyalty_service
 
     def iframe_page_data(self, context: UserContextSessionEntry) -> dict[str, object]:
         app = self._load_app(context.account_id)
@@ -20,22 +30,19 @@ class EntryService:
         if context.is_admin:
             stores_values = self._json_api_factory.create(app.access_token).store_names()
 
-        is_settings_required = app.status != AppStatus.ACTIVATED
         return {
             "accountId": context.account_id,
             "isAdmin": context.is_admin,
-            "accessLevel": "администратор аккаунта" if context.is_admin else "простой пользователь",
             "uid": context.uid,
             "fio": context.fio,
             "contextNonce": context.context_nonce,
+            "appVersion": app_version(),
+            "infoMessage": app.info_message or "",
+            "store": app.store or "",
             "storesValues": stores_values,
-            "status": {
-                "className": "status-required" if is_settings_required else "status-ready",
-                "title": "ТРЕБУЕТСЯ НАСТРОЙКА" if is_settings_required else "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
-                "showDetails": not is_settings_required,
-                "infoMessage": app.info_message or "",
-                "store": app.store or "",
-            },
+            "status": describe_app_status(app),
+            # [feature:loyalty] программа лояльности
+            **self._loyalty_service.iframe_page_data(context.account_id),
         }
 
     def mobile_iframe_view_model(self, context: UserContextSessionEntry) -> dict[str, object]:

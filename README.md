@@ -5,7 +5,7 @@
 В демо-приложении реализованы:
 - Активация и деактивация решения через Vendor API
 - Генерация `descriptor.xml` для публикации в каталоге
-- Отображение iframe-страницы настроек решения
+- Основной iframe на React и `@moysklad/uikit`: настройки решения, программа лояльности, примеры UI Kit
 - Отображение мобильной iframe-страницы для проверки возможностей WebView
 - Получение контекста пользователя для iframe/виджетов по одноразовому токену из JS Widget SDK с кешированием в server-side сессии
 - Сохранение настроек решения и обновление статуса во внешнем Vendor API
@@ -15,6 +15,7 @@
 - Встраивание виджетов в Заказ покупателя и Счет покупателю
 - Обработка кастомных кнопок в документе и списке Заказов покупателя
 - Открытие кастомного модального окна из виджета и кнопки
+- Подключение программы лояльности через Vendor API и заглушка провайдера Loyalty API (модуль `app/loyalty`, см. [README](app/loyalty/README.md))
 
 ВНИМАНИЕ! Проект является демонстрационным. Вопросы связанные с эксплуатацией на production: 
 полноценный мониторинг, отказоустойчивость, строгая политика хранения секретов, rate-limit защита, не являются целью данного репозитория.
@@ -28,8 +29,12 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
+(cd frontend && npm ci && npm run build)
 python -m app
 ```
+
+Основной iframe собирается из `frontend/` (Node.js 24) в `static/assets/app`. При правках фронта
+держите запущенной пересборку: `cd frontend && npm run watch`.
 
 Либо запустите решение в Docker:
 
@@ -102,6 +107,11 @@ Backend-запросы из iframe/виджетов:
 - `POST /utils/update-settings` — сохранение настроек из iframe, требует `contextNonce`
 - `POST /utils/get-object?entity=...` — получение открытого объекта для виджета, параметры `contextNonce` и `objectId` передаются в теле запроса
 - `POST /utils/stores` — один запрос списка складов с количеством ретраев; iframe вызывает endpoint от 1 до 1000 раз, требуется право администратора и `contextNonce`
+- `POST /utils/connect-loyalty` — передача настроек Loyalty API в МойСклад, требуется право администратора и `contextNonce`
+
+Loyalty API (вызывает МойСклад, авторизация по заголовку `Lognex-Discount-API-Auth-Token`):
+- `POST /loyalty/counterparty`, `GET /loyalty/counterparty?search=...`, `POST /loyalty/counterparty/detail`
+- `POST /loyalty/retaildemand/recalc`, `POST /loyalty/retaildemand`, `POST /loyalty/retailsalesreturn`
 
 Vendor API:
 - `PUT /api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
@@ -115,8 +125,9 @@ Runtime-состояние хранится в SQLite-файле `APP_DB_PATH` �
 - `account_application` — состояние установки по паре `appId`/`accountId`: сообщение настроек, выбранный склад, access token, статус и дату обновления.
 - `sessions` — server-side сессии Flask.
 - `jwt` — replay-маркеры service JWT `jti` до истечения `exp`.
+- `loyalty_installation` — подключение программы лояльности: токен провайдера, режим внешнего поиска и момент, когда МойСклад принял настройки.
 
-Access token и session payload сохраняются в базе в зашифрованном виде через `APP_ENCRYPT_KEY`. При смене ключа уже сохраненные данные не смогут расшифроваться.
+Access token, токен провайдера лояльности и session payload сохраняются в базе в зашифрованном виде через `APP_ENCRYPT_KEY`. При смене ключа уже сохраненные данные не смогут расшифроваться.
 
 SQLite-хранилища работают через SQLAlchemy. Приложение использует общий набор соединений; на время операции берется свободное соединение, а ожидание ограничено 5 секундами.
 
@@ -180,9 +191,14 @@ API и интеграции:
 - `app/integrations/json_api.py` — клиент JSON API 1.2
 
 UI и entry:
+- `frontend/` — основной iframe на React и `@moysklad/uikit`, сборка esbuild в `static/assets/app`
+- `frontend/src/uikit-examples/` — вкладка «Примеры UI Kit», см. [README](frontend/src/uikit-examples/README.md)
 - `templates/entry/*` — Jinja-шаблоны iframe/widget/popup страниц
-- `static/assets/entry/*` — фронтенд-стили/скрипты
+- `static/assets/entry/*` — стили и скрипты виджетов, popup и мобильного iframe
 - `app/services/entry.py` — подготовка view models для entry-страниц
+
+Программа лояльности:
+- `app/loyalty/` — подключение Loyalty API и заглушка провайдера, см. [README](app/loyalty/README.md)
 
 Состояние и безопасность:
 - `app/domain/app_instance.py` — модель состояния установки приложения

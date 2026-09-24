@@ -19,6 +19,7 @@ def build_descriptor_xml(config: AppConfig) -> str:
     <vendorApi>
         <endpointBase>{config.app_base_url}</endpointBase>
     </vendorApi>
+    <loyaltyApi/>
     <access>
         <resource>https://api.moysklad.ru/api/remap/1.2</resource>
         <scope>admin</scope>
