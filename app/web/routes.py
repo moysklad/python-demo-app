@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from flask import Flask, Response, jsonify, render_template, request, session
+from flask import Flask, Response, current_app, jsonify, render_template, request, session
+
+from app.config import app_version
 
 from app.domain.entities import is_supported_entity
 from app.security.jwt_tools import auth_token_is_valid
@@ -34,7 +37,9 @@ def register_routes(app: Flask, services: Any) -> None:
 
     @app.get("/entry/iframe-main")
     def iframe_main():
-        return render_template("entry/iframe.html")
+        # Основной iframe — React-приложение (исходники в frontend/, сборка в static/assets/app).
+        # Сервер отдает только оболочку: контекст пользователя и данные страницы приходят через /entry/user-context.
+        return render_template("entry/iframe.html", bundle_version=_bundle_version)
 
     @app.post("/entry/user-context")
     def user_context():
@@ -142,6 +147,13 @@ def _render_widget(services: Any, entity: str) -> str:
         raise WebError("Unsupported entity", 400)
 
     return render_template("entry/widget.html", **services.entry_service.widget_view_model(entity))
+
+
+def _bundle_version(filename: str) -> str:
+    try:
+        return str(int((Path(current_app.static_folder or "") / "app" / filename).stat().st_mtime))
+    except OSError:
+        return app_version()
 
 
 def _load_entry_context(services: Any) -> Any:

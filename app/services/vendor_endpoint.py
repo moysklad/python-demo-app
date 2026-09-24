@@ -4,6 +4,8 @@ import logging
 from typing import Any, Literal, TypedDict
 
 from app.domain.app_instance import AppInstance, AppInstanceRepository, AppStatus
+# [feature:loyalty] программа лояльности: реакция на Install/Uninstall.
+from app.loyalty.service import LoyaltyService
 from app.services.buttons import process_document_button_click, process_list_button_click
 from app.services.common import ServiceResponse
 from app.services.utils import has_required_settings
@@ -62,8 +64,9 @@ class VendorButtonBody(TypedDict, total=False):
 
 
 class VendorEndpointService:
-    def __init__(self, app_repository: AppInstanceRepository) -> None:
+    def __init__(self, app_repository: AppInstanceRepository, loyalty_service: LoyaltyService) -> None:
         self._app_repository = app_repository
+        self._loyalty_service = loyalty_service
 
     def put_app(self, app_id: str, account_id: str, body: ActivationBody) -> ServiceResponse:
         """
@@ -96,6 +99,8 @@ class VendorEndpointService:
                 )
             else:
                 logger.info("App appId=%s installed on accountId=%s. Status: %s", app_id, account_id, app.status)
+            # [feature:loyalty] после повторной установки настройки лояльности нужно передать заново
+            self._loyalty_service.on_install(app_id, account_id)
         elif cause == "Resume":
             # Приостановка временная: настройки не удалялись, решение продолжает работу с прежней конфигурацией
             app.status = AppStatus.ACTIVATED if has_required_settings(app) else AppStatus.SETTINGS_REQUIRED
@@ -126,6 +131,8 @@ class VendorEndpointService:
         app = self._app_repository.load(app_id, account_id) or AppInstance(app_id, account_id)
 
         if cause == "Uninstall":
+            # [feature:loyalty] МойСклад удаляет настройки лояльности вместе с решением
+            self._loyalty_service.on_uninstall(app_id, account_id)
             if app.status in {AppStatus.UNKNOWN, AppStatus.UNINSTALLED}:
                 logger.info("App appId=%s already uninstalled on accountId=%s", app_id, account_id)
                 return ServiceResponse(status_code=204)

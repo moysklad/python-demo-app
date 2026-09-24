@@ -7,6 +7,7 @@ def test_descriptor_contains_vendor_api_and_entries(app_config):
     descriptor = build_descriptor_xml(app_config)
 
     assert "<endpointBase>http://localhost:8080</endpointBase>" in descriptor
+    assert "</vendorApi>\n    <loyaltyApi/>\n    <access>" in descriptor
     assert "<iframes>" in descriptor
     assert '<iframe type="main" sourceUrl="http://localhost:8080/entry/iframe-main" useContextKey="false">' in descriptor
     assert '<iframe type="mobile" sourceUrl="http://localhost:8080/entry/iframe-mobile"/>' in descriptor

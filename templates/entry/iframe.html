@@ -4,62 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Python Demo App iframe</title>
-    <link rel="stylesheet" href="/assets/entry/iframe.css">
-    <script type="text/javascript"
-            src="https://cdn.jsdelivr.net/npm/@moysklad/js-widget-sdk@1.3.0/dist/widget.min.js"></script>
-    <script defer src="/assets/entry/iframe.js"></script>
+    <link rel="stylesheet" href="/assets/app/iframe.css?v={{ bundle_version('iframe.css') }}">
 </head>
 <body>
-<main class="iframe-layout">
-    <section id="bootstrapPanel" class="panel">
-        <h2>Контекст пользователя</h2>
-        <p id="bootstrapStatus" class="muted" role="status" aria-live="polite">Получаем контекст пользователя…</p>
-    </section>
-    <section id="userPanel" class="panel" hidden>
-        <h2>Информация о пользователе</h2>
-        <ul class="info-list">
-            <li>Текущий пользователь: <span id="userUid"></span></li>
-            <li>Идентификатор аккаунта: <span id="userAccountId"></span></li>
-            <li>Уровень доступа: <b id="userAccessLevel"></b></li>
-        </ul>
-        <div class="panel-divider"></div>
-        <h2>Состояние решения</h2>
-        <div id="appStatus" class="status-box">
-            <div id="appStatusTitle" class="status-title"></div>
-            <p id="appStatusDetails" hidden></p>
-        </div>
-    </section>
-    <section id="settingsPanel" class="panel" hidden>
-        <h2>Форма настроек</h2>
-        <div id="adminSettings" hidden>
-            <form id="settingsForm" method="post" action="../utils/update-settings" data-update-url="/utils/update-settings">
-                <div class="row field-row">
-                    <label for="infoMessage">Укажите сообщение</label>
-                    <input id="infoMessage" type="text" name="infoMessage">
-                </div>
-                <div class="row field-row">
-                    <label for="store">Выберите склад</label>
-                    <select id="store" name="store"></select>
-                </div>
-                <input type="hidden" name="contextNonce" value=""/>
-                <button class="btn" type="submit">Сохранить</button>
-                <div id="settingsResult" class="form-result" role="status" aria-live="polite"></div>
-            </form>
-            <div class="panel-divider"></div>
-            <h2>Проверка ретраев</h2>
-            <p class="muted">Выполнится выбранное количество запросов списка складов и покажет срабатывания ретраев по заголовку <code>X-Lognex-Retry-After</code>.</p>
-            <form id="retryTestForm" method="post" action="../utils/stores" data-test-url="/utils/stores">
-                <div class="row field-row">
-                    <label for="requestCount">Количество запросов</label>
-                    <input id="requestCount" type="number" name="requestCount" min="1" max="1000" value="50" required>
-                </div>
-                <input type="hidden" name="contextNonce" value=""/>
-                <button class="btn" type="submit">Запустить проверку</button>
-                <div id="retryTestResult" class="form-result" role="status" aria-live="polite"></div>
-            </form>
-        </div>
-        <p id="settingsRestricted" class="muted" hidden>Настройки доступны только администратору аккаунта</p>
-    </section>
-</main>
+<div id="root"></div>
+<script type="module" src="/assets/app/iframe.js?v={{ bundle_version('iframe.js') }}"></script>
 </body>
 </html>

@@ -6,3 +6,5 @@ __pycache__
 *.pyc
 .pytest_cache
 .idea
+frontend/node_modules
+static/assets/app

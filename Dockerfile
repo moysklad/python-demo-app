@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1.7
 
+# Собираем основной iframe (React + @moysklad/uikit) из frontend/ в static/assets/app
+FROM node:24-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+RUN npm ci --no-audit --no-fund
+COPY frontend ./
+RUN NODE_ENV=production npm run build
+
 FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -17,6 +25,7 @@ COPY pyproject.toml README.md ./
 COPY app ./app
 COPY templates ./templates
 COPY static ./static
+COPY --from=frontend /app/static/assets/app ./static/assets/app
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir .

@@ -374,19 +374,9 @@ def test_iframe_main_is_served_without_user_context(app_config):
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "js-widget-sdk@1.3.0" in html
-    assert 'src="/assets/entry/iframe.js"' in html
-    assert 'id="bootstrapStatus"' in html
-    assert 'id="settingsForm"' in html
-    assert 'data-update-url="/utils/update-settings"' in html
-    assert 'id="settingsResult"' in html
-    assert 'id="retryTestForm"' in html
-    assert 'data-test-url="/utils/stores"' in html
-    assert 'id="retryTestResult"' in html
-    assert 'id="appStatus"' in html
-    assert 'id="appStatusTitle"' in html
-    assert 'id="appStatusDetails"' in html
-    assert re.search(r'name="contextNonce" value="[^"]+"', html) is None
+    assert re.search(r'<script type="module" src="/assets/app/iframe\.js\?v=[^"]+">', html) is not None
+    assert 'id="root"' in html
+    assert "contextNonce" not in html
     assert response.headers.get("Set-Cookie") is None
 
 
@@ -438,7 +428,10 @@ def test_entry_bootstrap_uses_context_nonce_after_token_exchange(app_config):
     assert payload["pageData"]["isAdmin"] is True
     assert payload["pageData"]["contextNonce"] == context_nonce
     assert payload["pageData"]["storesValues"] == ["Основной склад"]
-    assert payload["pageData"]["status"]["className"] == "status-required"
+    assert payload["pageData"]["status"]["badge"] == "orange"
+    assert payload["pageData"]["appVersion"]
+    assert payload["pageData"]["loyalty"]["state"] == "not-connected"
+    assert payload["pageData"]["defaultLoyaltyProviderUrl"] == "http://localhost:8080/loyalty"
     assert "opaque-token-1" not in str(payload)
     with client.session_transaction() as session_data:
         assert "opaque-token-1" not in str(session_data)
@@ -463,8 +456,8 @@ def test_entry_bootstrap_uses_context_nonce_after_token_exchange(app_config):
     assert update_response.get_json() == {
         "message": "Настройки обновлены",
         "status": {
-            "className": "status-ready",
-            "title": "РЕШЕНИЕ ГОТОВО К РАБОТЕ",
+            "badge": "green",
+            "title": "Решение готово к работе",
             "showDetails": True,
             "infoMessage": "hello",
             "store": "Основной склад",
@@ -727,8 +720,8 @@ def test_update_settings_sets_settings_required_without_store(app_config):
     assert response.get_json() == {
         "message": "Настройки обновлены",
         "status": {
-            "className": "status-required",
-            "title": "ТРЕБУЕТСЯ НАСТРОЙКА",
+            "badge": "orange",
+            "title": "Требуется настройка",
             "showDetails": False,
             "infoMessage": "hello",
             "store": "",

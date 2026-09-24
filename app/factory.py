@@ -15,6 +15,11 @@ from app.domain.app_instance import AppInstanceRepository
 from app.integrations.http_client import HttpClient
 from app.integrations.json_api import JsonApiFactory
 from app.integrations.vendor_api import VendorApi
+# [feature:loyalty] программа лояльности: модуль app/loyalty.
+from app.loyalty.repository import SqliteLoyaltyInstallationRepository
+from app.loyalty.routes import register_loyalty
+from app.loyalty.service import LoyaltyService
+from app.loyalty.vendor_api import LoyaltyVendorApi
 from app.repositories.sqlite import (
     SqliteAppInstanceRepository,
     SqliteJwtReplayRepository,
@@ -46,6 +51,7 @@ class AppServices:
     entry_service: EntryService
     utils_service: UtilsService
     vendor_endpoint_service: VendorEndpointService
+    loyalty_service: LoyaltyService
 
 
 def create_app(
@@ -55,6 +61,7 @@ def create_app(
     jwt_replay_repository: JwtReplayRepository | None = None,
     vendor_api: VendorApi | None = None,
     json_api_factory: JsonApiFactory | None = None,
+    loyalty_vendor_api: LoyaltyVendorApi | None = None,
 ) -> Flask:
     runtime_config = config or load_config()
     configure_logging(runtime_config.log_level)
@@ -104,6 +111,11 @@ def create_app(
     vendor_api = vendor_api or VendorApi(runtime_config, http_client)
     json_api_factory = json_api_factory or JsonApiFactory(runtime_config, http_client)
     user_context_service = UserContextService(vendor_api)
+    loyalty_service = LoyaltyService(
+        runtime_config,
+        SqliteLoyaltyInstallationRepository(runtime_config.encrypt_key, sqlite_session_factory),
+        loyalty_vendor_api or LoyaltyVendorApi(runtime_config, http_client),
+    )
     services = AppServices(
         config=runtime_config,
         app_repository=app_repository,
@@ -111,13 +123,16 @@ def create_app(
         vendor_api=vendor_api,
         json_api_factory=json_api_factory,
         user_context_service=user_context_service,
-        entry_service=EntryService(runtime_config, app_repository, json_api_factory),
+        entry_service=EntryService(runtime_config, app_repository, json_api_factory, loyalty_service),
         utils_service=UtilsService(runtime_config, app_repository, user_context_service, vendor_api, json_api_factory),
-        vendor_endpoint_service=VendorEndpointService(app_repository),
+        vendor_endpoint_service=VendorEndpointService(app_repository, loyalty_service),
+        loyalty_service=loyalty_service,
     )
     flask_app.config["APP_SERVICES"] = services
 
     register_routes(flask_app, services)
+    # [feature:loyalty] провайдер Loyalty API и backend вкладки
+    register_loyalty(flask_app, loyalty_service, user_context_service)
     if runtime_config.log_level == "DEBUG":
         _register_request_logging(flask_app)
 
