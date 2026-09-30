@@ -7,14 +7,14 @@ import { VStack } from "@moysklad/uikit/components/VStack";
 
 const STORES_URL = "/utils/stores";
 const MAX_REQUEST_COUNT = 1000;
-const STAGGER_MS = 30;
+const STAGGER_MS = 5;
 
 type StoresResponse = { success?: boolean; retries?: number };
 type Progress = { total: number; completed: number; successful: number; failed: number; retries: number };
 
 /**
- * Ручная проверка ретраев JSON API: выбранное количество запросов списка складов уходит почти одновременно,
- * backend (POST /utils/stores) повторяет их по заголовку X-Lognex-Retry-After и возвращает число повторов.
+ * Короткий интервал создаёт нагрузку на лимиты JSON API, но не отправляет все запросы
+ * строго одновременно. Сервер обрабатывает каждый POST /utils/stores как одиночный запрос.
  */
 export function RetryProbe({ contextNonce }: { contextNonce: string }) {
   const [requestCount, setRequestCount] = useState("50");
@@ -31,6 +31,10 @@ export function RetryProbe({ contextNonce }: { contextNonce: string }) {
       return;
     }
 
+    if (isRunning) {
+      return;
+    }
+
     setError(null);
     setRunning(true);
     const current: Progress = { total, completed: 0, successful: 0, failed: 0, retries: 0 };
@@ -44,8 +48,7 @@ export function RetryProbe({ contextNonce }: { contextNonce: string }) {
           const response = await fetch(STORES_URL, {
             method: "POST",
             credentials: "same-origin",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contextNonce })
+            body: new URLSearchParams({ contextNonce })
           });
           const contentType = response.headers.get("content-type") || "";
           const payload = (contentType.includes("application/json") ? await response.json() : null) as StoresResponse | null;
@@ -90,13 +93,13 @@ export function RetryProbe({ contextNonce }: { contextNonce: string }) {
           onChange={(event) => setRequestCount(event.target.value)}
         />
         <div>
-          <Button type="submit" variant={ButtonVariants.SECONDARY} isLoading={isRunning}>
+          <Button type="submit" variant={ButtonVariants.PRIMARY} isLoading={isRunning}>
             Запустить проверку
           </Button>
         </div>
         {error && <Banner type="warning" title={error} />}
         {summary && (
-          <Banner type={isRunning || progress.failed === 0 ? "info" : "warning"} title={summary} />
+          <Banner type={progress.failed === 0 ? "info" : "warning"} title={summary} />
         )}
       </VStack>
     </form>

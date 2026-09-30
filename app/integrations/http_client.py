@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -21,6 +22,8 @@ DEFAULT_HTTP_RETRY_BASE_SECONDS = 0.25
 LOGNEX_RETRY_AFTER_HEADER = "X-Lognex-Retry-After"
 LOGNEX_RETRY_INTERVAL_HEADER = "X-Lognex-Retry-TimeInterval"
 RATE_LIMIT_HEADER = "X-RateLimit-Limit"
+JSON_API_SERVICE_NAME = "json-api"
+GATE_IDLE_SECONDS = 10 * 60
 MAX_LOGGED_RESPONSE_BODY_CHARS = 2000
 
 
@@ -81,16 +84,22 @@ class _LognexRateLimitGate:
         self._lock = threading.Lock()
         self._not_before = 0.0
         self._spacing = 0.0
+        self._last_used = time.monotonic()
 
-    def reserve(self) -> None:
+    def reserve(self, minimum: float = 0.0) -> None:
         """Claim the next send slot and sleep until it opens."""
         with self._lock:
             now = time.monotonic()
-            start = max(now, self._not_before)
+            self._last_used = now
+            start = max(now + minimum, self._not_before)
             self._not_before = start + self._spacing
         delay = start - now
         if delay > 0:
             time.sleep(delay)
+
+    def is_idle(self, idle_before: float) -> bool:
+        with self._lock:
+            return self._last_used <= idle_before
 
     def observe(self, response: requests.Response) -> None:
         spacing = _rate_limit_spacing_seconds(response.headers)
@@ -100,6 +109,7 @@ class _LognexRateLimitGate:
             else None
         )
         with self._lock:
+            self._last_used = time.monotonic()
             if spacing is not None:
                 self._spacing = spacing
             # reserve() already parked the next slot at send time. Pushing
@@ -116,12 +126,19 @@ class HttpClient:
         self._injected_session = _configure_session(session) if session is not None else None
         self._thread_local = threading.local()
         self._gates_lock = threading.Lock()
-        self._gates: dict[tuple[str, str], _LognexRateLimitGate] = {}
+        self._gates: dict[str, _LognexRateLimitGate] = {}
 
-    def _gate_for(self, service_name: str, bearer_token: str) -> _LognexRateLimitGate:
-        """Rate limits are counted per API and per account, so gate on both."""
-        key = (service_name, bearer_token)
+    def _gate_for(self, service_name: str, bearer_token: str) -> _LognexRateLimitGate | None:
+        """JSON API limits are per account token. Vendor API is not paced."""
+        if service_name != JSON_API_SERVICE_NAME:
+            return None
+
+        key = hashlib.sha256(bearer_token.encode()).hexdigest()
+        idle_before = time.monotonic() - GATE_IDLE_SECONDS
         with self._gates_lock:
+            for stale_key, stale_gate in list(self._gates.items()):
+                if stale_gate.is_idle(idle_before):
+                    del self._gates[stale_key]
             gate = self._gates.get(key)
             if gate is None:
                 gate = _LognexRateLimitGate()
@@ -324,16 +341,26 @@ class HttpClient:
         headers: dict[str, str],
         data: Any,
         retryable: bool | None,
-        gate: _LognexRateLimitGate,
+        gate: _LognexRateLimitGate | None,
     ) -> requests.Response:
         session = self._session_for_current_thread()
         if retryable is False:
             return self._send_once(session, method, url, headers=headers, data=data, retryable=False, gate=gate)
 
-        # Adapter handles transport retries only. This loop owns X-Lognex-Retry-After.
+        # Adapter handles transport retries only. This loop owns HTTP 429/502/503/504.
         retries = _build_lognex_retries()
+        minimum_delay = 0.0
         while True:
-            response = self._send_once(session, method, url, headers=headers, data=data, retryable=True, gate=gate)
+            response = self._send_once(
+                session,
+                method,
+                url,
+                headers=headers,
+                data=data,
+                retryable=True,
+                gate=gate,
+                minimum_delay=minimum_delay,
+            )
             retry_view = _RetryAfterView(response)
             retry_after = retries.get_retry_after(retry_view)
             if not retries.is_retry(method, response.status_code, retry_after is not None):
@@ -345,6 +372,13 @@ class HttpClient:
             except MaxRetryError:
                 setattr(response, "_lognex_retry_count", _lognex_retry_count(retries))
                 return response
+
+            if response.status_code == HTTPStatus.TOO_MANY_REQUESTS and retry_after is not None and gate is not None:
+                minimum_delay = 0.0
+            elif response.status_code == HTTPStatus.TOO_MANY_REQUESTS and retry_after is not None:
+                minimum_delay = retry_after
+            else:
+                minimum_delay = DEFAULT_HTTP_RETRY_BASE_SECONDS * len(retries.history)
 
             logger.info(
                 "Retrying %s %s after %s header delayMs=%s retry=%s/%s",
@@ -365,9 +399,13 @@ class HttpClient:
         headers: dict[str, str],
         data: Any,
         retryable: bool,
-        gate: _LognexRateLimitGate,
+        gate: _LognexRateLimitGate | None,
+        minimum_delay: float = 0.0,
     ) -> requests.Response:
-        gate.reserve()
+        if gate is not None:
+            gate.reserve(minimum_delay)
+        elif minimum_delay > 0:
+            time.sleep(minimum_delay)
         if not retryable:
             request = requests.Request(method, url, headers=headers, json=data)
             prepared = session.prepare_request(request)
@@ -381,7 +419,8 @@ class HttpClient:
                 json=data,
                 timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
             )
-        gate.observe(response)
+        if gate is not None:
+            gate.observe(response)
         return response
 
 
@@ -436,6 +475,12 @@ def _build_lognex_retries() -> LognexRetry:
         backoff_factor=DEFAULT_HTTP_RETRY_BASE_SECONDS,
         raise_on_status=False,
         respect_retry_after_header=True,
+        status_forcelist=[
+            HTTPStatus.TOO_MANY_REQUESTS,
+            HTTPStatus.BAD_GATEWAY,
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            HTTPStatus.GATEWAY_TIMEOUT,
+        ],
     )
 
 

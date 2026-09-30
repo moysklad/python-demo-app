@@ -130,13 +130,13 @@ def test_http_client_paces_requests_by_advertised_rate_limit(monkeypatch):
     )
     client = HttpClient(session)
 
-    client.request_json("GET", "https://example.test/entity/store", "token")
+    client.request_json("GET", "https://example.test/entity/store", "token", service_name="json-api")
     assert sleeps == []
 
-    client.request_json("GET", "https://example.test/entity/store", "token")
+    client.request_json("GET", "https://example.test/entity/store", "token", service_name="json-api")
     assert sleeps == []
 
-    client.request_json("GET", "https://example.test/entity/store", "token")
+    client.request_json("GET", "https://example.test/entity/store", "token", service_name="json-api")
     assert sleeps == [0.6]
 
 
@@ -155,8 +155,8 @@ def test_http_client_paces_each_account_separately(monkeypatch):
     )
     client = HttpClient(session)
 
-    client.request_json("GET", "https://example.test/entity/store", "token-first-account")
-    client.request_json("GET", "https://example.test/entity/store", "token-second-account")
+    client.request_json("GET", "https://example.test/entity/store", "token-first-account", service_name="json-api")
+    client.request_json("GET", "https://example.test/entity/store", "token-second-account", service_name="json-api")
 
     assert sleeps == []
 
@@ -185,11 +185,11 @@ def test_http_client_does_not_add_response_rtt_to_reserved_spacing(monkeypatch):
     session.request = request_with_rtt
     client = HttpClient(session)
 
-    client.request_json("GET", "https://example.test/entity/store", "token")
-    client.request_json("GET", "https://example.test/entity/store", "token")
+    client.request_json("GET", "https://example.test/entity/store", "token", service_name="json-api")
+    client.request_json("GET", "https://example.test/entity/store", "token", service_name="json-api")
     assert sleeps == []
 
-    client.request_json("GET", "https://example.test/entity/store", "token")
+    client.request_json("GET", "https://example.test/entity/store", "token", service_name="json-api")
     assert sleeps == [0.4]
 
 
@@ -255,7 +255,12 @@ def test_http_client_shares_retry_after_wait_across_threads(monkeypatch):
     client = HttpClient(session)
 
     def request_stores(_: int) -> tuple[Any | None, int]:
-        return client.request_json_with_retries("GET", "https://example.test/entity/store", "token")
+        return client.request_json_with_retries(
+            "GET",
+            "https://example.test/entity/store",
+            "token",
+            service_name="json-api",
+        )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(request_stores, range(2)))
@@ -266,3 +271,90 @@ def test_http_client_shares_retry_after_wait_across_threads(monkeypatch):
     assert all(call_time >= 1.0 for call_time in session.call_times[1:])
     assert sleeps
     assert all(sleep == 1.0 for sleep in sleeps)
+
+
+def test_http_client_retries_gateway_status_with_backoff(monkeypatch):
+    sleeps, _now = _install_fake_clock(monkeypatch)
+    session = QueuedSession(
+        [
+            make_response(502),
+            make_response(200, body='{"ok": true}'),
+        ]
+    )
+    client = HttpClient(session)
+
+    result = client.request_json(
+        "GET",
+        "https://example.test/entity/store",
+        "token",
+        service_name="json-api",
+    )
+
+    assert result == {"ok": True}
+    assert sleeps == [0.25]
+
+
+def test_http_client_retries_429_without_valid_header_with_backoff(monkeypatch):
+    sleeps, _now = _install_fake_clock(monkeypatch)
+    session = QueuedSession(
+        [
+            make_response(429, headers={"X-Lognex-Retry-After": "bad"}),
+            make_response(200, body='{"ok": true}'),
+        ]
+    )
+    client = HttpClient(session)
+
+    result, retries = client.request_json_with_retries("GET", "https://example.test/entity/store", "token")
+
+    assert result == {"ok": True}
+    assert retries == 1
+    assert sleeps == [0.25]
+
+
+def test_http_client_does_not_pace_vendor_api(monkeypatch):
+    sleeps, _now = _install_fake_clock(monkeypatch)
+    limit_headers = {
+        "X-RateLimit-Limit": "5",
+        "X-Lognex-Retry-TimeInterval": "3000",
+    }
+    session = QueuedSession(
+        [
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
+            make_response(200, headers=limit_headers, body='{"ok": true}'),
+        ]
+    )
+    client = HttpClient(session)
+
+    for _ in range(3):
+        client.request_json(
+            "PUT",
+            "https://example.test/apps/status",
+            "vendor-token",
+            service_name="vendor-api",
+        )
+
+    assert sleeps == []
+
+
+def test_http_client_forgets_json_api_gate_after_ten_idle_minutes(monkeypatch):
+    sleeps, now = _install_fake_clock(monkeypatch)
+    limit_headers = {
+        "X-RateLimit-Limit": "2",
+        "X-Lognex-Retry-TimeInterval": "160",
+    }
+    session = QueuedSession(
+        [
+            make_response(200, headers=limit_headers, body="{}"),
+            make_response(200, body="{}"),
+            make_response(200, body="{}"),
+        ]
+    )
+    client = HttpClient(session)
+
+    client.request_json("GET", "https://example.test/entity/store", "idle-token", service_name="json-api")
+    now[0] += 10 * 60 + 0.001
+    client.request_json("GET", "https://example.test/entity/store", "idle-token", service_name="json-api")
+    client.request_json("GET", "https://example.test/entity/store", "idle-token", service_name="json-api")
+
+    assert sleeps == []
