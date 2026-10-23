@@ -6,7 +6,6 @@
   --border: #d5dbe5;
   --surface: #ffffff;
   --accent: #036ce5;
-  --accent-soft: #e8f1ff;
   --success: #217346;
   --danger: #b3261e;
   --radius-lg: 18px;
@@ -22,6 +21,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -32,6 +35,7 @@ body {
 
 .mobile-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
@@ -83,13 +87,19 @@ body {
   color: var(--muted);
 }
 
-.context-grid {
+.context-grid,
+.env-grid {
   display: grid;
   gap: 10px;
   margin: 16px 0 0;
 }
 
-.context-grid div {
+.env-grid {
+  margin: 0;
+}
+
+.context-grid div,
+.env-grid div {
   display: grid;
   gap: 2px;
   padding: 10px;
@@ -98,12 +108,14 @@ body {
 }
 
 .context-grid dt,
+.env-grid dt,
 label {
   color: var(--muted);
   font-size: 12px;
 }
 
-.context-grid dd {
+.context-grid dd,
+.env-grid dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
@@ -169,19 +181,19 @@ button:focus-visible {
 .badge {
   flex: 0 0 auto;
   border-radius: 999px;
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: #eef2f7;
+  color: var(--muted);
   font-size: 11px;
   padding: 5px 8px;
   white-space: nowrap;
 }
 
-.badge.is-supported {
+.badge.is-ok {
   background: #e7f6ee;
   color: var(--success);
 }
 
-.badge.is-unsupported {
+.badge.is-error {
   background: #ffe8e8;
   color: var(--danger);
 }
@@ -223,6 +235,7 @@ button:focus-visible {
   padding-left: 18px;
   color: var(--muted);
   font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .meter {
@@ -240,15 +253,16 @@ button:focus-visible {
   transition: width 0.1s linear;
 }
 
-.output {
-  min-height: 54px;
-  margin: 0;
-  overflow: auto;
-  border-radius: var(--radius-md);
-  background: #101828;
-  color: #f7f9fc;
-  padding: 12px;
-  white-space: pre-wrap;
+.report-output {
+  min-height: 220px;
+  font-size: 12px;
+}
+
+.safe-area-probe {
+  position: fixed;
+  visibility: hidden;
+  pointer-events: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 @media (min-width: 720px) {
@@ -259,7 +273,8 @@ button:focus-visible {
     padding: 24px;
   }
 
-  .hero-card {
+  .hero-card,
+  #report {
     grid-column: 1 / -1;
   }
 

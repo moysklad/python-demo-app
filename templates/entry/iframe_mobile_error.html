@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Python Demo App mobile WebView</title>
+    <link rel="stylesheet" href="/assets/entry/iframe-mobile.css">
+</head>
+<body>
+<main class="mobile-page">
+    <section class="hero-card">
+        <p class="eyebrow">Mobile iframe</p>
+        <h1>Не удалось открыть решение</h1>
+        {% if context_key_present %}
+        <p class="muted">
+            МойСклад не вернул пользователя по contextKey из адреса страницы: ссылка устарела.
+            Закройте решение и откройте его заново из мобильного приложения — оно запросит новую ссылку.
+        </p>
+        {% else %}
+        <p class="muted">
+            В адресе страницы нет параметра contextKey. Страницу открывает мобильное приложение МоегоСклада
+            по ссылке из Mobile iframe API, без contextKey пользователь неизвестен.
+        </p>
+        {% endif %}
+    </section>
+</main>
+</body>
+</html>

@@ -83,7 +83,10 @@ def register_routes(app: Flask, services: Any) -> None:
     @app.get("/entry/iframe-mobile")
     def iframe_mobile():
         # Мобильный хост не поддерживает протокол user-context, сессия поднимается по contextKey из URL.
-        context = _load_entry_context(services)
+        context_key = _trimmed_string(request.args.get("contextKey"))
+        context = services.user_context_service.load_for_entry(session, context_key)
+        if not context:
+            return render_template("entry/iframe_mobile_error.html", context_key_present=context_key is not None), 401
         return render_template("entry/iframe_mobile.html", **services.entry_service.mobile_iframe_view_model(context))
 
     @app.get("/entry/widget-customerorder")
@@ -162,18 +165,6 @@ def _bundle_version(filename: str) -> str:
         return str(int((Path(current_app.static_folder or "") / "app" / filename).stat().st_mtime))
     except OSError:
         return app_version()
-
-
-def _load_entry_context(services: Any) -> Any:
-    context_key = _trimmed_string(request.args.get("contextKey"))
-    if context_key is None:
-        raise WebError("Authorization error: contextKey parameter is required", 401)
-
-    context = services.user_context_service.load_for_entry(session, context_key)
-    if not context:
-        raise WebError("Authorization error: failed to load user context", 401)
-
-    return context
 
 
 def _require_vendor_auth(services: Any) -> None:

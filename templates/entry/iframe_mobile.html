@@ -14,50 +14,51 @@
         <h1>Проверка WebView</h1>
         <p class="muted">
             Страница открыта с серверным контекстом пользователя и набором проверок возможностей мобильного браузера.
+            Метка в углу карточки показывает итог последней проверки, внизу страницы — отчёт для пересылки.
         </p>
         <dl class="context-grid" aria-label="Контекст пользователя">
             <div>
                 <dt>Пользователь</dt>
-                <dd>{{ uid }} ({{ fio }})</dd>
+                <dd data-report="Пользователь">{{ uid }} ({{ fio }})</dd>
             </div>
             <div>
                 <dt>Аккаунт</dt>
-                <dd>{{ account_id }}</dd>
+                <dd data-report="Аккаунт">{{ account_id }}</dd>
             </div>
             <div>
                 <dt>Доступ</dt>
-                <dd>{{ access_level }}</dd>
+                <dd data-report="Доступ">{{ access_level }}</dd>
             </div>
         </dl>
         <input type="hidden" name="contextNonce" value="{{ context_nonce }}">
     </section>
 
-    <section class="capability-card" data-capability="text">
+    <section class="capability-card" data-check="text" data-title="Ввод текста и буфер обмена">
         <div class="card-heading">
             <div>
                 <p class="eyebrow">Ввод текста</p>
                 <h2>Клавиатура и буфер обмена</h2>
             </div>
-            <span class="badge" data-support="clipboard">Проверяется</span>
+            <span class="badge">Не проверено</span>
         </div>
         <label for="textInput">Однострочное поле</label>
-        <input id="textInput" type="text" autocomplete="off" inputmode="text" placeholder="Введите текст с мобильной клавиатуры">
+        <input id="textInput" type="text" autocomplete="off" inputmode="text" placeholder="Текст с клавиатуры">
         <label for="textArea">Многострочное поле / вставка</label>
         <textarea id="textArea" placeholder="Вставьте текст вручную или через кнопку чтения буфера"></textarea>
         <div class="actions">
             <button class="btn" type="button" data-action="copy-text">Скопировать текст</button>
             <button class="btn secondary" type="button" data-action="read-clipboard">Прочитать буфер</button>
         </div>
-        <p class="status" id="clipboardStatus" role="status" aria-live="polite"></p>
+        <p class="status" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="capability-card" data-capability="media-files">
+    <section class="capability-card" data-check="media" data-title="Изображения, видео и файлы">
         <div class="card-heading">
             <div>
                 <p class="eyebrow">Медиа</p>
                 <h2>Изображения, видео и файлы</h2>
             </div>
-            <span class="badge" data-support="file">Проверяется</span>
+            <span class="badge">Не проверено</span>
         </div>
         <label for="imagePicker">Выберите изображение</label>
         <input id="imagePicker" type="file" accept="image/*">
@@ -71,33 +72,33 @@
         <input id="filePicker" type="file" multiple>
         <ul id="fileList" class="file-list" aria-live="polite"></ul>
 
-        <button class="btn" type="button" data-action="download-file">Скачать тестовый файл</button>
-        <p class="status" id="fileStatus" role="status" aria-live="polite"></p>
+        <button class="btn" type="button" data-action="download-file">Скачать отчёт файлом</button>
+        <p class="status" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="capability-card" data-capability="camera">
+    <section class="capability-card" data-check="camera" data-title="Камера">
         <div class="card-heading">
             <div>
                 <p class="eyebrow">Камера</p>
                 <h2>Видео с камеры</h2>
             </div>
-            <span class="badge" data-support="camera">Проверяется</span>
+            <span class="badge">Не проверено</span>
         </div>
         <video id="cameraPreview" class="preview-video camera-preview" autoplay playsinline muted hidden></video>
         <div class="actions">
             <button class="btn" type="button" data-action="start-camera">Включить камеру</button>
             <button class="btn secondary" type="button" data-action="stop-camera">Остановить</button>
         </div>
-        <p class="status" id="cameraStatus" role="status" aria-live="polite"></p>
+        <p class="status" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="capability-card" data-capability="microphone">
+    <section class="capability-card" data-check="microphone" data-title="Микрофон">
         <div class="card-heading">
             <div>
                 <p class="eyebrow">Микрофон</p>
                 <h2>Разрешение и уровень сигнала</h2>
             </div>
-            <span class="badge" data-support="microphone">Проверяется</span>
+            <span class="badge">Не проверено</span>
         </div>
         <div class="meter" aria-label="Уровень микрофона">
             <div id="microphoneLevel"></div>
@@ -106,21 +107,38 @@
             <button class="btn" type="button" data-action="start-microphone">Включить микрофон</button>
             <button class="btn secondary" type="button" data-action="stop-microphone">Остановить</button>
         </div>
-        <p class="status" id="microphoneStatus" role="status" aria-live="polite"></p>
+        <p class="status" role="status" aria-live="polite"></p>
     </section>
 
-    <section class="capability-card" data-capability="geolocation">
+    <section class="capability-card" data-check="geolocation" data-title="Геолокация">
         <div class="card-heading">
             <div>
                 <p class="eyebrow">Геолокация</p>
                 <h2>Координаты устройства</h2>
             </div>
-            <span class="badge" data-support="geolocation">Проверяется</span>
+            <span class="badge">Не проверено</span>
         </div>
         <button class="btn" type="button" data-action="get-location">Получить координаты</button>
-        <pre id="locationOutput" class="output" aria-live="polite"></pre>
-        <p class="status" id="locationStatus" role="status" aria-live="polite"></p>
+        <dl id="locationOutput" class="env-grid" aria-live="polite" hidden></dl>
+        <p class="status" role="status" aria-live="polite"></p>
     </section>
+
+    <section class="capability-card" id="report">
+        <div class="card-heading">
+            <div>
+                <p class="eyebrow">Окружение</p>
+                <h2>WebView, экран и отчёт</h2>
+            </div>
+        </div>
+        <p class="muted">
+            Видимая область уменьшается при открытой клавиатуре: сравните значение до и после фокуса в текстовом поле.
+        </p>
+        <dl id="environment" class="env-grid"></dl>
+        <button class="btn" type="button" data-action="copy-report">Скопировать отчёт</button>
+        <textarea id="reportOutput" class="report-output" readonly hidden aria-label="Текст отчёта"></textarea>
+        <p class="status" role="status" aria-live="polite"></p>
+    </section>
+    <div class="safe-area-probe" aria-hidden="true"></div>
 </main>
 </body>
 </html>
