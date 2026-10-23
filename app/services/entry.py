@@ -7,6 +7,8 @@ from app.domain.app_instance import AppInstance, AppInstanceRepository
 from app.integrations.json_api import JsonApiFactory
 # [feature:loyalty] программа лояльности: данные вкладки приходят из модуля app/loyalty.
 from app.loyalty.service import LoyaltyService
+# [feature:scenario] действия в сценариях: журнал показывает окно чатов.
+from app.scenario.service import ScenarioService
 from app.services.user_context import UserContextSessionEntry
 from app.services.utils import describe_app_status
 
@@ -18,11 +20,13 @@ class EntryService:
         app_repository: AppInstanceRepository,
         json_api_factory: JsonApiFactory,
         loyalty_service: LoyaltyService,
+        scenario_service: ScenarioService,
     ) -> None:
         self._config = config
         self._app_repository = app_repository
         self._json_api_factory = json_api_factory
         self._loyalty_service = loyalty_service
+        self._scenario_service = scenario_service
 
     def iframe_page_data(self, context: UserContextSessionEntry) -> dict[str, object]:
         app = self._load_app(context.account_id)
@@ -43,6 +47,21 @@ class EntryService:
             "status": describe_app_status(app),
             # [feature:loyalty] программа лояльности
             **self._loyalty_service.iframe_page_data(context.account_id),
+        }
+
+    def chat_page_data(self, context: UserContextSessionEntry) -> dict[str, object]:
+        """Окно чатов: пользователь, состояние решения и журнал действий из сценариев."""
+        app = self._load_app(context.account_id)
+        return {
+            "accountId": context.account_id,
+            "isAdmin": context.is_admin,
+            "uid": context.uid,
+            "fio": context.fio,
+            "contextNonce": context.context_nonce,
+            "appVersion": app_version(),
+            "status": describe_app_status(app),
+            # [feature:scenario] действия в сценариях
+            **self._scenario_service.journal(context.account_id),
         }
 
     def mobile_iframe_view_model(self, context: UserContextSessionEntry) -> dict[str, object]:

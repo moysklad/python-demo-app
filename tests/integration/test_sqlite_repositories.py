@@ -1,3 +1,5 @@
+"""Интеграционный тест: SQLite-хранилища установок и server-side сессий."""
+
 from __future__ import annotations
 
 import time

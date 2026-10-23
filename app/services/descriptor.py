@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.config import AppConfig
+# [feature:scenario] действия в сценариях: список действий общий с обработчиком.
+from app.scenario.events import SCENARIO_ACTIONS
 
 
 def build_descriptor_xml(config: AppConfig) -> str:
@@ -10,6 +12,11 @@ def build_descriptor_xml(config: AppConfig) -> str:
                    xsi:schemaLocation="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2 https://apps-api.moysklad.ru/xml/ns/appstore/app/v2/application-v2.xsd">
     <iframes>
         <iframe type="main" sourceUrl="{config.app_base_url}/entry/iframe-main" useContextKey="false">
+            <uses>
+                <user-context/>
+            </uses>
+        </iframe>
+        <iframe type="chat" sourceUrl="{config.app_base_url}/entry/iframe-chat" useContextKey="false">
             <uses>
                 <user-context/>
             </uses>
@@ -97,4 +104,11 @@ def build_descriptor_xml(config: AppConfig) -> str:
             </locations>
         </button>
     </buttons>
+    <scenario>
+{_scenario_actions_xml()}
+    </scenario>
 </ServerApplication>"""
+
+
+def _scenario_actions_xml() -> str:
+    return "\n".join(f'        <action name="{name}" title="{title}"/>' for name, title in SCENARIO_ACTIONS.items())

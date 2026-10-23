@@ -20,6 +20,10 @@ from app.loyalty.repository import SqliteLoyaltyInstallationRepository
 from app.loyalty.routes import register_loyalty
 from app.loyalty.service import LoyaltyService
 from app.loyalty.vendor_api import LoyaltyVendorApi
+# [feature:scenario] действия в сценариях: модуль app/scenario.
+from app.scenario.repository import SqliteScenarioEventRepository
+from app.scenario.routes import register_scenario
+from app.scenario.service import ScenarioService
 from app.repositories.sqlite import (
     SqliteAppInstanceRepository,
     SqliteJwtReplayRepository,
@@ -52,6 +56,7 @@ class AppServices:
     utils_service: UtilsService
     vendor_endpoint_service: VendorEndpointService
     loyalty_service: LoyaltyService
+    scenario_service: ScenarioService
 
 
 def create_app(
@@ -116,6 +121,12 @@ def create_app(
         SqliteLoyaltyInstallationRepository(runtime_config.encrypt_key, sqlite_session_factory),
         loyalty_vendor_api or LoyaltyVendorApi(runtime_config, http_client),
     )
+    scenario_service = ScenarioService(
+        runtime_config,
+        app_repository,
+        SqliteScenarioEventRepository(sqlite_session_factory),
+        json_api_factory,
+    )
     services = AppServices(
         config=runtime_config,
         app_repository=app_repository,
@@ -123,16 +134,19 @@ def create_app(
         vendor_api=vendor_api,
         json_api_factory=json_api_factory,
         user_context_service=user_context_service,
-        entry_service=EntryService(runtime_config, app_repository, json_api_factory, loyalty_service),
+        entry_service=EntryService(runtime_config, app_repository, json_api_factory, loyalty_service, scenario_service),
         utils_service=UtilsService(runtime_config, app_repository, user_context_service, vendor_api, json_api_factory),
         vendor_endpoint_service=VendorEndpointService(app_repository, loyalty_service),
         loyalty_service=loyalty_service,
+        scenario_service=scenario_service,
     )
     flask_app.config["APP_SERVICES"] = services
 
     register_routes(flask_app, services)
     # [feature:loyalty] провайдер Loyalty API и backend вкладки
     register_loyalty(flask_app, loyalty_service, user_context_service)
+    # [feature:scenario] обработчик действий из сценариев и журнал для окна чатов
+    register_scenario(flask_app, scenario_service, user_context_service, runtime_config, jwt_replay_repository)
     if runtime_config.log_level == "DEBUG":
         _register_request_logging(flask_app)
 

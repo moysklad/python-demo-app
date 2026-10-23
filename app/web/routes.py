@@ -70,7 +70,15 @@ def register_routes(app: Flask, services: Any) -> None:
         }
         if body.get("page") == "iframe":
             response["pageData"] = services.entry_service.iframe_page_data(outcome.context)
+        elif body.get("page") == "chat":
+            response["pageData"] = services.entry_service.chat_page_data(outcome.context)
         return _json_response(response, 200)
+
+    @app.get("/entry/iframe-chat")
+    def iframe_chat():
+        # Окно чатов — отдельный React-бандл на том же протоколе user-context, что и основной iframe.
+        # Хост чатов высоту окна не подстраивает, скролл у страницы свой.
+        return render_template("entry/iframe_chat.html", bundle_version=_bundle_version)
 
     @app.get("/entry/iframe-mobile")
     def iframe_mobile():

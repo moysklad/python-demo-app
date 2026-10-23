@@ -52,6 +52,10 @@ class LognexRetry(Retry):
         )
 
 
+class RateLimitWaitExceedsBudget(RequestException):
+    """Ожидание слота лимитера не укладывается в бюджет времени запроса."""
+
+
 @dataclass(frozen=True)
 class _HttpResult:
     body: str
@@ -86,16 +90,23 @@ class _LognexRateLimitGate:
         self._spacing = 0.0
         self._last_used = time.monotonic()
 
-    def reserve(self, minimum: float = 0.0) -> None:
-        """Claim the next send slot and sleep until it opens."""
+    def reserve(self, minimum: float = 0.0, budget: float | None = None) -> float:
+        """Claim the next send slot and sleep until it opens; return the wait.
+
+        With `budget`, a slot that opens too late is not claimed and the caller
+        fails fast instead of overrunning its deadline.
+        """
         with self._lock:
             now = time.monotonic()
-            self._last_used = now
             start = max(now + minimum, self._not_before)
+            delay = start - now
+            if budget is not None and delay >= budget:
+                raise RateLimitWaitExceedsBudget(f"rate limit wait {delay:.3f}s exceeds budget {budget:.3f}s")
+            self._last_used = now
             self._not_before = start + self._spacing
-        delay = start - now
         if delay > 0:
             time.sleep(delay)
+        return delay
 
     def is_idle(self, idle_before: float) -> bool:
         with self._lock:
@@ -213,11 +224,14 @@ class HttpClient:
         service_name: str = "external-api",
         retryable: bool | None = None,
         log_body: bool = True,
+        budget: float | None = None,
     ) -> HttpJsonResponse:
         """Send an HTTP request and return its status together with the decoded JSON body.
 
         Unlike `request_json`, non-2xx responses are not collapsed into `None`:
         the caller sees the status code and the decoded error body, if any.
+        `budget` caps the whole call, rate-limit wait included: a request that
+        cannot finish in time fails like a transport error without being sent.
         """
         result = self._request(
             method,
@@ -227,6 +241,7 @@ class HttpClient:
             service_name=service_name,
             retryable=retryable,
             log_body=log_body,
+            budget=budget,
         )
         if result is None:
             return HttpJsonResponse(status_code=None, json_body=None, successful=False)
@@ -275,6 +290,7 @@ class HttpClient:
         service_name: str,
         retryable: bool | None,
         log_body: bool = True,
+        budget: float | None = None,
     ) -> _HttpResult | None:
         normalized_method = method.upper()
         request_line = f"{normalized_method} {url}"
@@ -294,7 +310,11 @@ class HttpClient:
                 data=data,
                 retryable=retryable,
                 gate=self._gate_for(service_name, bearer_token),
+                budget=budget,
             )
+        except RateLimitWaitExceedsBudget as error:
+            logger.warning("Skipped %s service=%s: %s", request_line, service_name, error)
+            return None
         except RequestException as error:
             duration_ms = int((time.time() - started_at) * 1000)
             logger.error(
@@ -342,10 +362,11 @@ class HttpClient:
         data: Any,
         retryable: bool | None,
         gate: _LognexRateLimitGate | None,
+        budget: float | None = None,
     ) -> requests.Response:
         session = self._session_for_current_thread()
         if retryable is False:
-            return self._send_once(session, method, url, headers=headers, data=data, retryable=False, gate=gate)
+            return self._send_once(session, method, url, headers=headers, data=data, retryable=False, gate=gate, budget=budget)
 
         # Adapter handles transport retries only. This loop owns HTTP 429/502/503/504.
         retries = _build_lognex_retries()
@@ -360,6 +381,7 @@ class HttpClient:
                 retryable=True,
                 gate=gate,
                 minimum_delay=minimum_delay,
+                budget=budget,
             )
             retry_view = _RetryAfterView(response)
             retry_after = retries.get_retry_after(retry_view)
@@ -401,23 +423,26 @@ class HttpClient:
         retryable: bool,
         gate: _LognexRateLimitGate | None,
         minimum_delay: float = 0.0,
+        budget: float | None = None,
     ) -> requests.Response:
+        waited = 0.0
         if gate is not None:
-            gate.reserve(minimum_delay)
+            waited = gate.reserve(minimum_delay, budget)
         elif minimum_delay > 0:
             time.sleep(minimum_delay)
+        timeout = DEFAULT_HTTP_TIMEOUT_SECONDS if budget is None else min(DEFAULT_HTTP_TIMEOUT_SECONDS, budget - waited)
         if not retryable:
             request = requests.Request(method, url, headers=headers, json=data)
             prepared = session.prepare_request(request)
             adapter = HTTPAdapter(max_retries=False)
-            response = adapter.send(prepared, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS)
+            response = adapter.send(prepared, timeout=timeout)
         else:
             response = session.request(
                 method,
                 url,
                 headers=headers,
                 json=data,
-                timeout=DEFAULT_HTTP_TIMEOUT_SECONDS,
+                timeout=timeout,
             )
         if gate is not None:
             gate.observe(response)

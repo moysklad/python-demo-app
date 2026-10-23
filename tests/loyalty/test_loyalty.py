@@ -1,11 +1,11 @@
+"""Интеграционный тест: подключение Loyalty API через Vendor API и заглушка провайдера."""
+
 from __future__ import annotations
 
-from app.factory import create_app
 from app.integrations.vendor_api import UserContextExchangeResult, VendorApiUserContext
 from app.loyalty.vendor_api import LoyaltySettingsResult
 
-from tests.conftest import FakeJsonApiFactory, FakeVendorApi, vendor_auth_header
-from tests.memory_repositories import MemoryAppInstanceRepository, MemoryJwtReplayRepository
+from tests.conftest import FakeVendorApi, bootstrap_iframe, create_client as create_app_client, vendor_auth_header
 
 TOKEN_HEADER = "Lognex-Discount-API-Auth-Token"
 
@@ -21,21 +21,11 @@ class FakeLoyaltyVendorApi:
 
 
 def create_client(app_config, vendor_api: FakeVendorApi, loyalty_vendor_api: FakeLoyaltyVendorApi):
-    app = create_app(
-        app_config,
-        app_repository=MemoryAppInstanceRepository(),
-        jwt_replay_repository=MemoryJwtReplayRepository(),
-        vendor_api=vendor_api,
-        json_api_factory=FakeJsonApiFactory(),
-        loyalty_vendor_api=loyalty_vendor_api,
-    )
-    return app.test_client()
+    return create_app_client(app_config, vendor_api=vendor_api, loyalty_vendor_api=loyalty_vendor_api)
 
 
 def bootstrap(client) -> str:
-    response = client.post("/entry/user-context", json={"token": "opaque-token-1", "page": "iframe"})
-    assert response.status_code == 200
-    return response.get_json()["contextNonce"]
+    return bootstrap_iframe(client)["contextNonce"]
 
 
 def connect(client, context_nonce: str, **body):
@@ -98,12 +88,20 @@ def test_unknown_reconnect_outcome_accepts_both_tokens_until_confirmed(app_confi
     assert connect(client, context_nonce, providerToken="provider-token-1").status_code == 200
 
     loyalty_vendor_api.result = LoyaltySettingsResult(outcome="unknown", message="Vendor API не ответил")
-    assert connect(client, context_nonce, providerToken="provider-token-2").status_code == 502
+    assert connect(client, context_nonce, providerToken="provider-token-2", externalSearch=True).status_code == 502
     assert client.post("/loyalty/counterparty/detail", headers={TOKEN_HEADER: "provider-token-1"}).status_code == 200
     assert client.post("/loyalty/counterparty/detail", headers={TOKEN_HEADER: "provider-token-2"}).status_code == 200
 
+    assert connect(client, context_nonce, providerToken="provider-token-3").status_code == 409
+    assert client.post("/loyalty/counterparty/detail", headers={TOKEN_HEADER: "provider-token-3"}).status_code == 401
+
+    loyalty_vendor_api.result = LoyaltySettingsResult(outcome="rejected", code=2007, message="Решение еще устанавливается")
+    assert connect(client, context_nonce, externalSearch=False).status_code == 502
+    assert client.get("/loyalty/counterparty?search=ivanov", headers={TOKEN_HEADER: "provider-token-2"}).status_code == 200
+
     loyalty_vendor_api.result = LoyaltySettingsResult(outcome="ok")
-    assert connect(client, context_nonce, providerToken="provider-token-2").status_code == 200
+    assert connect(client, context_nonce).status_code == 200
+    assert loyalty_vendor_api.calls[-1][3] == "provider-token-2"
     assert client.post("/loyalty/counterparty/detail", headers={TOKEN_HEADER: "provider-token-1"}).status_code == 401
     assert client.post("/loyalty/counterparty/detail", headers={TOKEN_HEADER: "provider-token-2"}).status_code == 200
 
