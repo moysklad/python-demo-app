@@ -137,4 +137,21 @@ def test_mobile_iframe_exchanges_context_key_for_nonce(app_config):
     assert re.search(r'name="contextNonce" value="([^"]+)"', html) is not None
     assert 'src="/assets/entry/iframe-mobile.js"' in html
     assert "WidgetSDK" not in html
-    assert client.get("/entry/iframe-mobile").status_code == 401
+
+    missing_key = client.get("/entry/iframe-mobile")
+    assert missing_key.status_code == 401
+    assert "нет параметра contextKey" in missing_key.get_data(as_text=True)
+
+
+def test_mobile_iframe_explains_expired_context_key(app_config):
+    vendor_api = FakeVendorApi()
+    vendor_api.context_response = None
+    client = create_client(app_config, vendor_api=vendor_api)
+
+    response = client.get("/entry/iframe-mobile?contextKey=expired-key")
+    html = response.get_data(as_text=True)
+
+    assert response.status_code == 401
+    assert "откройте его заново из мобильного приложения" in html
+    assert "expired-key" not in html
+    assert 'name="contextNonce"' not in html

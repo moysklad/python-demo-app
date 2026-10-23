@@ -1,5 +1,4 @@
 (function () {
-  const root = document.querySelector(".mobile-page");
   const state = {
     imageUrl: "",
     videoUrl: "",
@@ -8,17 +7,27 @@
     microphoneStream: null,
     audioContext: null,
     microphoneAnimationFrame: 0,
+    cameraRequest: 0,
+    microphoneRequest: 0,
+    results: {},
+  };
+
+  const GEOLOCATION_ERRORS = {
+    1: "PERMISSION_DENIED",
+    2: "POSITION_UNAVAILABLE",
+    3: "TIMEOUT",
   };
 
   function $(selector) {
     return document.querySelector(selector);
   }
 
-  function setStatus(id, message, kind) {
-    const element = document.getElementById(id);
-    if (!element) {
-      return;
-    }
+  function card(check) {
+    return document.querySelector(`[data-check="${check}"]`);
+  }
+
+  function setStatus(section, message, kind) {
+    const element = section.querySelector(".status");
     element.textContent = message;
     element.classList.remove("is-success", "is-error");
     if (kind) {
@@ -26,22 +35,29 @@
     }
   }
 
-  function setBadge(name, supported) {
-    const badge = document.querySelector(`[data-support="${name}"]`);
-    if (!badge) {
-      return;
-    }
-    badge.textContent = supported ? "Доступно" : "Недоступно";
-    badge.classList.toggle("is-supported", supported);
-    badge.classList.toggle("is-unsupported", !supported);
+  function setBadge(check, text, kind) {
+    const badge = card(check).querySelector(".badge");
+    badge.textContent = text;
+    badge.classList.remove("is-ok", "is-error");
+    badge.classList.add(kind);
+  }
+
+  function setResult(check, ok, detail, hint) {
+    state.results[check] = { ok, detail };
+    setBadge(check, ok ? "Работает" : "Ошибка", ok ? "is-ok" : "is-error");
+    setStatus(card(check), hint ? `${detail}. ${hint}` : detail, ok ? "is-success" : "is-error");
+  }
+
+  function notify(check, message) {
+    setStatus(card(check), message, "");
   }
 
   function errorMessage(error) {
     if (!error) {
       return "Неизвестная ошибка";
     }
-    if (error.name && error.message) {
-      return `${error.name}: ${error.message}`;
+    if (error.message) {
+      return error.name && error.name !== "Error" ? `${error.name}: ${error.message}` : error.message;
     }
     return String(error);
   }
@@ -63,176 +79,209 @@
     return `${(size / 1024 / 1024).toFixed(1)} МБ`;
   }
 
-  function getMediaDevices() {
-    return navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function";
+  function hasClipboardWrite() {
+    return Boolean(navigator.clipboard && typeof navigator.clipboard.writeText === "function");
+  }
+
+  function hasGetUserMedia() {
+    return Boolean(navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function");
   }
 
   function stopStream(stream) {
-    if (!stream) {
-      return;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
     }
-    stream.getTracks().forEach((track) => track.stop());
+  }
+
+  function describeTrack(stream) {
+    const track = stream.getTracks()[0];
+    const settings = typeof track.getSettings === "function" ? track.getSettings() : {};
+    const size = settings.width && settings.height ? `, ${settings.width}×${settings.height}` : "";
+    return `${track.label || track.kind}${size}`;
+  }
+
+  function definitionRow(term, value) {
+    const row = document.createElement("div");
+    const dt = document.createElement("dt");
+    const dd = document.createElement("dd");
+    dt.textContent = term;
+    dd.textContent = value;
+    row.append(dt, dd);
+    return row;
+  }
+
+  function safeAreaInsets() {
+    const style = getComputedStyle($(".safe-area-probe"));
+    return ["top", "right", "bottom", "left"]
+      .map((side) => `${side} ${Math.round(parseFloat(style.getPropertyValue(`padding-${side}`)) || 0)}`)
+      .join(", ");
+  }
+
+  function orientation() {
+    if (screen.orientation && screen.orientation.type) {
+      return screen.orientation.type;
+    }
+    return window.matchMedia("(orientation: portrait)").matches ? "portrait" : "landscape";
+  }
+
+  function environment() {
+    const viewport = window.visualViewport;
+    return [
+      ["userAgent", navigator.userAgent],
+      ["Окно", `${window.innerWidth}×${window.innerHeight}`],
+      ["Видимая область", viewport ? `${Math.round(viewport.width)}×${Math.round(viewport.height)}` : "visualViewport недоступен"],
+      ["Экран", `${screen.width}×${screen.height}, devicePixelRatio ${window.devicePixelRatio}`],
+      ["Ориентация", orientation()],
+      ["Safe area, px", safeAreaInsets()],
+      ["Защищённый контекст", window.isSecureContext ? "да" : "нет — камера, микрофон и буфер обмена недоступны"],
+      ["Язык", navigator.language],
+    ];
+  }
+
+  function renderEnvironment() {
+    $("#environment").replaceChildren(...environment().map(([term, value]) => definitionRow(term, value)));
+  }
+
+  function reportText() {
+    const lines = ["Python Demo App — проверка мобильного WebView", `Время: ${new Date().toISOString()}`];
+    document.querySelectorAll("[data-report]").forEach((element) => {
+      lines.push(`${element.dataset.report}: ${element.textContent.trim()}`);
+    });
+    environment().forEach(([term, value]) => lines.push(`${term}: ${value}`));
+    lines.push("", "Проверки:");
+    document.querySelectorAll("[data-check]").forEach((section) => {
+      const result = state.results[section.dataset.check];
+      const outcome = result
+        ? `${result.ok ? "работает" : "ошибка"} — ${result.detail.replace(/\s+/g, " ").slice(0, 160)}`
+        : "не проверено";
+      lines.push(`- ${section.dataset.title}: ${outcome}`);
+    });
+    return `${lines.join("\n")}\n`;
   }
 
   async function copyText() {
-    const input = $("#textInput");
-    const area = $("#textArea");
-    const text = (input && input.value) || (area && area.value) || "Тестовый текст из мобильного WebView";
-
-    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-      throw new Error("Clipboard write API недоступен");
+    const text = $("#textInput").value || $("#textArea").value || "Тестовый текст из мобильного WebView";
+    if (!hasClipboardWrite()) {
+      throw new Error("Clipboard API недоступен");
     }
 
     await navigator.clipboard.writeText(text);
-    setStatus("clipboardStatus", `Скопировано: ${text}`, "is-success");
+    setResult("text", true, `Скопировано: ${text}`);
   }
 
   async function readClipboard() {
-    const area = $("#textArea");
     if (!navigator.clipboard || typeof navigator.clipboard.readText !== "function") {
       throw new Error("Clipboard read API недоступен");
     }
 
     const text = await navigator.clipboard.readText();
-    if (area) {
-      area.value = text;
-    }
-    setStatus("clipboardStatus", text ? "Текст прочитан из буфера" : "Буфер пуст", "is-success");
+    $("#textArea").value = text;
+    setResult("text", true, text ? `Прочитано из буфера: ${text.length} симв.` : "Буфер пуст");
   }
 
   function showImage(file) {
-    const preview = $("#imagePreview");
-    if (!preview || !file) {
+    if (!file) {
       return;
     }
 
+    const preview = $("#imagePreview");
     revokeUrl("imageUrl");
     state.imageUrl = URL.createObjectURL(file);
+    preview.onload = () => setResult("media", true, `Изображение показано: ${file.name}, ${preview.naturalWidth}×${preview.naturalHeight}`);
+    preview.onerror = () => setResult("media", false, `Изображение выбрано, но не отображается: ${file.name}`);
     preview.src = state.imageUrl;
     preview.hidden = false;
-    setStatus("fileStatus", `Изображение выбрано: ${file.name}`, "is-success");
   }
 
   function showVideo(file) {
-    const preview = $("#videoPreview");
-    if (!preview || !file) {
+    if (!file) {
       return;
     }
 
+    const preview = $("#videoPreview");
     revokeUrl("videoUrl");
     state.videoUrl = URL.createObjectURL(file);
+    preview.onloadedmetadata = () =>
+      setResult("media", true, `Видео загружено: ${file.name}, ${preview.videoWidth}×${preview.videoHeight}, ${Math.round(preview.duration)} с`);
+    preview.onerror = () => setResult("media", false, `Видео выбрано, но не декодируется: ${file.name}`);
     preview.src = state.videoUrl;
     preview.hidden = false;
     preview.load();
-    setStatus("fileStatus", `Видео выбрано: ${file.name}`, "is-success");
   }
 
   function showFiles(files) {
     const list = $("#fileList");
-    if (!list) {
-      return;
+    list.replaceChildren(
+      ...Array.from(files).map((file) => {
+        const item = document.createElement("li");
+        item.textContent = `${file.name} (${formatFileSize(file.size)}, ${file.type || "тип не указан"})`;
+        return item;
+      }),
+    );
+    if (files.length) {
+      setResult("media", true, `Файлы доступны в WebView: ${files.length}`);
+    } else {
+      notify("media", "Файлы не выбраны");
     }
-
-    list.innerHTML = "";
-    Array.from(files).forEach((file) => {
-      const item = document.createElement("li");
-      item.textContent = `${file.name} (${formatFileSize(file.size)}, ${file.type || "тип не указан"})`;
-      list.appendChild(item);
-    });
-    setStatus("fileStatus", files.length ? `Файлы доступны в WebView: ${files.length}` : "Файлы не выбраны", files.length ? "is-success" : "");
   }
 
   function downloadFile() {
     revokeUrl("downloadUrl");
-    const payload = [
-      "Python Demo App mobile WebView check",
-      `time=${new Date().toISOString()}`,
-      `userAgent=${navigator.userAgent}`,
-      `sessionNoncePresent=${root && root.dataset.contextNonce ? "yes" : "no"}`,
-      "",
-    ].join("\n");
-    const blob = new Blob([payload], { type: "text/plain;charset=utf-8" });
+    const blob = new Blob([reportText()], { type: "text/plain;charset=utf-8" });
     state.downloadUrl = URL.createObjectURL(blob);
 
     const link = document.createElement("a");
     link.href = state.downloadUrl;
-    link.download = "webview-check.txt";
+    link.download = "webview-report.txt";
     document.body.appendChild(link);
     link.click();
     link.remove();
-    setStatus("fileStatus", "Скачивание тестового файла запущено", "is-success");
+    notify("media", "Скачивание webview-report.txt запущено — проверьте, что файл появился в загрузках");
+  }
+
+  function releaseCamera() {
+    const preview = $("#cameraPreview");
+    state.cameraRequest += 1;
+    stopStream(state.cameraStream);
+    state.cameraStream = null;
+    preview.pause();
+    preview.srcObject = null;
+    preview.hidden = true;
   }
 
   async function startCamera() {
-    if (!getMediaDevices()) {
+    if (!hasGetUserMedia()) {
       throw new Error("getUserMedia недоступен");
     }
 
-    const preview = $("#cameraPreview");
-    stopCamera();
-    state.cameraStream = await navigator.mediaDevices.getUserMedia({
+    releaseCamera();
+    const request = state.cameraRequest;
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" } },
       audio: false,
     });
-
-    if (preview) {
-      preview.srcObject = state.cameraStream;
-      preview.hidden = false;
-      await preview.play();
-    }
-    setStatus("cameraStatus", "Камера включена", "is-success");
-  }
-
-  function stopCamera() {
-    const preview = $("#cameraPreview");
-    stopStream(state.cameraStream);
-    state.cameraStream = null;
-    if (preview) {
-      preview.pause();
-      preview.srcObject = null;
-      preview.hidden = true;
-    }
-    setStatus("cameraStatus", "Камера остановлена", "");
-  }
-
-  async function startMicrophone() {
-    if (!getMediaDevices()) {
-      throw new Error("getUserMedia недоступен");
-    }
-
-    stopMicrophone();
-    state.microphoneStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) {
-      setStatus("microphoneStatus", "Доступ к микрофону получен, AudioContext недоступен для уровня сигнала", "is-success");
+    if (request !== state.cameraRequest) {
+      stopStream(stream);
       return;
     }
+    state.cameraStream = stream;
 
-    state.audioContext = new AudioContextClass();
-    const source = state.audioContext.createMediaStreamSource(state.microphoneStream);
-    const analyser = state.audioContext.createAnalyser();
-    analyser.fftSize = 256;
-    source.connect(analyser);
-
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    const level = $("#microphoneLevel");
-
-    function updateLevel() {
-      analyser.getByteFrequencyData(data);
-      const average = data.reduce((sum, value) => sum + value, 0) / data.length;
-      if (level) {
-        level.style.width = `${Math.min(100, Math.round((average / 255) * 140))}%`;
-      }
-      state.microphoneAnimationFrame = window.requestAnimationFrame(updateLevel);
+    const preview = $("#cameraPreview");
+    preview.srcObject = stream;
+    preview.hidden = false;
+    const playError = await preview.play().then(() => null, (error) => error);
+    if (request !== state.cameraRequest) {
+      return;
     }
-
-    updateLevel();
-    setStatus("microphoneStatus", "Микрофон включен", "is-success");
+    if (playError) {
+      releaseCamera();
+      throw playError;
+    }
+    setResult("camera", true, `Камера включена: ${describeTrack(state.cameraStream)}`);
   }
 
-  function stopMicrophone() {
-    const level = $("#microphoneLevel");
+  function releaseMicrophone() {
+    state.microphoneRequest += 1;
     if (state.microphoneAnimationFrame) {
       window.cancelAnimationFrame(state.microphoneAnimationFrame);
       state.microphoneAnimationFrame = 0;
@@ -243,39 +292,114 @@
     }
     stopStream(state.microphoneStream);
     state.microphoneStream = null;
-    if (level) {
-      level.style.width = "0";
-    }
-    setStatus("microphoneStatus", "Микрофон остановлен", "");
+    $("#microphoneLevel").style.width = "0";
   }
 
-  function getLocation() {
-    if (!navigator.geolocation) {
-      setStatus("locationStatus", "Geolocation API недоступен", "is-error");
+  async function startMicrophone() {
+    if (!hasGetUserMedia()) {
+      throw new Error("getUserMedia недоступен");
+    }
+
+    releaseMicrophone();
+    const request = state.microphoneRequest;
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    if (request !== state.microphoneRequest) {
+      stopStream(stream);
+      return;
+    }
+    state.microphoneStream = stream;
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      setResult("microphone", true, "Доступ к микрофону получен, AudioContext недоступен для уровня сигнала");
       return;
     }
 
-    const output = $("#locationOutput");
-    setStatus("locationStatus", "Запрашиваем координаты...", "");
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const payload = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          accuracy: position.coords.accuracy,
-          timestamp: new Date(position.timestamp).toISOString(),
-        };
-        if (output) {
-          output.textContent = JSON.stringify(payload, null, 2);
-        }
-        setStatus("locationStatus", "Координаты получены", "is-success");
-      },
-      (error) => {
-        setStatus("locationStatus", errorMessage(error), "is-error");
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
-    );
+    let analyser;
+    try {
+      state.audioContext = new AudioContextClass();
+      analyser = state.audioContext.createAnalyser();
+      analyser.fftSize = 256;
+      state.audioContext.createMediaStreamSource(stream).connect(analyser);
+    } catch (error) {
+      releaseMicrophone();
+      throw error;
+    }
+
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const level = $("#microphoneLevel");
+
+    function updateLevel() {
+      analyser.getByteFrequencyData(data);
+      const average = data.reduce((sum, value) => sum + value, 0) / data.length;
+      level.style.width = `${Math.min(100, Math.round((average / 255) * 140))}%`;
+      state.microphoneAnimationFrame = window.requestAnimationFrame(updateLevel);
+    }
+
+    updateLevel();
+    setResult("microphone", true, `Микрофон включен: ${describeTrack(state.microphoneStream)}`, "Скажите что-нибудь — полоса должна двигаться");
   }
+
+  function currentPosition() {
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        resolve,
+        (error) => reject(Object.assign(new Error(error.message), { name: GEOLOCATION_ERRORS[error.code] || `code ${error.code}` })),
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+      );
+    });
+  }
+
+  async function getLocation() {
+    if (!navigator.geolocation) {
+      throw new Error("Geolocation API недоступен");
+    }
+
+    const output = $("#locationOutput");
+    output.hidden = true;
+    notify("geolocation", "Запрашиваем координаты...");
+    const { coords, timestamp } = await currentPosition();
+    output.replaceChildren(
+      definitionRow("Широта", coords.latitude.toFixed(6)),
+      definitionRow("Долгота", coords.longitude.toFixed(6)),
+      definitionRow("Точность", `${Math.round(coords.accuracy)} м`),
+      definitionRow("Время", new Date(timestamp).toLocaleString()),
+    );
+    output.hidden = false;
+    setResult("geolocation", true, `${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)} ±${Math.round(coords.accuracy)} м`);
+  }
+
+  async function copyReport() {
+    const report = $("#report");
+    const output = $("#reportOutput");
+    output.value = reportText();
+    output.hidden = false;
+    if (!hasClipboardWrite()) {
+      output.select();
+      throw new Error("Clipboard API недоступен — выделите текст отчёта и скопируйте вручную");
+    }
+
+    await navigator.clipboard.writeText(output.value);
+    setStatus(report, "Отчёт скопирован в буфер обмена", "is-success");
+  }
+
+  const ACTIONS = {
+    "copy-text": copyText,
+    "read-clipboard": readClipboard,
+    "download-file": downloadFile,
+    "start-camera": startCamera,
+    "stop-camera": () => {
+      releaseCamera();
+      notify("camera", "Камера остановлена");
+    },
+    "start-microphone": startMicrophone,
+    "stop-microphone": () => {
+      releaseMicrophone();
+      notify("microphone", "Микрофон остановлен");
+    },
+    "get-location": getLocation,
+    "copy-report": copyReport,
+  };
 
   function bindActions() {
     document.addEventListener("click", async (event) => {
@@ -284,35 +408,15 @@
         return;
       }
 
-      const action = button.dataset.action;
       button.disabled = true;
       try {
-        if (action === "copy-text") {
-          await copyText();
-        } else if (action === "read-clipboard") {
-          await readClipboard();
-        } else if (action === "download-file") {
-          downloadFile();
-        } else if (action === "start-camera") {
-          await startCamera();
-        } else if (action === "stop-camera") {
-          stopCamera();
-        } else if (action === "start-microphone") {
-          await startMicrophone();
-        } else if (action === "stop-microphone") {
-          stopMicrophone();
-        } else if (action === "get-location") {
-          getLocation();
-        }
+        await ACTIONS[button.dataset.action]();
       } catch (error) {
-        if (action.includes("clipboard")) {
-          setStatus("clipboardStatus", errorMessage(error), "is-error");
-        } else if (action.includes("camera")) {
-          setStatus("cameraStatus", errorMessage(error), "is-error");
-        } else if (action.includes("microphone")) {
-          setStatus("microphoneStatus", errorMessage(error), "is-error");
+        const section = button.closest("[data-check]");
+        if (section) {
+          setResult(section.dataset.check, false, errorMessage(error));
         } else {
-          setStatus("fileStatus", errorMessage(error), "is-error");
+          setStatus(button.closest("section"), errorMessage(error), "is-error");
         }
       } finally {
         button.disabled = false;
@@ -320,37 +424,45 @@
     });
 
     const imagePicker = $("#imagePicker");
-    if (imagePicker) {
-      imagePicker.addEventListener("change", () => showImage(imagePicker.files[0]));
-    }
+    imagePicker.addEventListener("change", () => showImage(imagePicker.files[0]));
 
     const videoPicker = $("#videoPicker");
-    if (videoPicker) {
-      videoPicker.addEventListener("change", () => showVideo(videoPicker.files[0]));
-    }
+    videoPicker.addEventListener("change", () => showVideo(videoPicker.files[0]));
 
     const filePicker = $("#filePicker");
-    if (filePicker) {
-      filePicker.addEventListener("change", () => showFiles(filePicker.files));
-    }
+    filePicker.addEventListener("change", () => showFiles(filePicker.files));
   }
 
-  function initSupportBadges() {
-    setBadge("clipboard", Boolean(navigator.clipboard));
-    setBadge("file", Boolean(window.File && window.URL && URL.createObjectURL));
-    setBadge("camera", getMediaDevices());
-    setBadge("microphone", getMediaDevices());
-    setBadge("geolocation", Boolean(navigator.geolocation));
+  function markMissingApis() {
+    const missing = {
+      text: hasClipboardWrite() ? "" : "Clipboard API недоступен",
+      camera: hasGetUserMedia() ? "" : "getUserMedia недоступен",
+      microphone: hasGetUserMedia() ? "" : "getUserMedia недоступен",
+      geolocation: navigator.geolocation ? "" : "Geolocation API недоступен",
+    };
+    Object.entries(missing).forEach(([check, reason]) => {
+      if (reason) {
+        state.results[check] = { ok: false, detail: reason };
+        setBadge(check, "Нет API", "is-error");
+        setStatus(card(check), reason, "is-error");
+      }
+    });
   }
 
   window.addEventListener("pagehide", () => {
-    stopCamera();
-    stopMicrophone();
+    releaseCamera();
+    releaseMicrophone();
     revokeUrl("imageUrl");
     revokeUrl("videoUrl");
     revokeUrl("downloadUrl");
   });
 
-  initSupportBadges();
+  window.addEventListener("resize", renderEnvironment);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", renderEnvironment);
+  }
+
+  markMissingApis();
+  renderEnvironment();
   bindActions();
 })();
