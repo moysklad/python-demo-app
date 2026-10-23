@@ -1,15 +1,15 @@
 import * as esbuild from "esbuild";
 import { rm } from "node:fs/promises";
 
-// Бандл основного iframe: React, @moysklad/uikit и JS Widget SDK. Flask отдает только HTML-оболочку
-// (templates/entry/iframe.html), а бандл раздает как статику из static/assets/app.
+// Бандлы основного iframe и окна чатов: React, @moysklad/uikit и JS Widget SDK. Flask отдает только
+// HTML-оболочки (templates/entry/iframe.html, iframe_chat.html), а бандлы раздает как статику из static/assets/app.
 const watch = process.argv.includes("--watch");
 const outdir = "../static/assets/app";
 
 await rm(outdir, { recursive: true, force: true });
 
 const context = await esbuild.context({
-  entryPoints: { iframe: "src/iframe/main.tsx" },
+  entryPoints: { iframe: "src/iframe/main.tsx", chat: "src/chat/main.tsx" },
   bundle: true,
   splitting: true,
   format: "esm",

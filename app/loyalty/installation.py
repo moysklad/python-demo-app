@@ -13,6 +13,7 @@ class LoyaltyInstallation:
     Подключение программы лояльности на аккаунте. Настройки меняются в два шага: сначала решение
     запоминает ожидающий токен, потом передает его в МойСклад. Пока исход не подтвержден, провайдер
     принимает и действующий, и ожидающий токен — так неудачное переподключение не ломает кассу.
+    Пока исход ожидающего токена не известен, заменить его другим нельзя: МойСклад мог его принять.
     """
 
     app_id: str
@@ -38,17 +39,26 @@ class LoyaltyInstallation:
     def allows_external_search(self) -> bool:
         return self.external_search or (self.pending_provider_token is not None and self.pending_external_search)
 
+    def pending_settings(self) -> tuple[str | None, bool]:
+        return (self.pending_provider_token, self.pending_external_search)
+
+    def can_begin_update(self, provider_token: str | None) -> bool:
+        return self.pending_provider_token is None or provider_token in (None, self.pending_provider_token)
+
     def begin_update(self, provider_token: str | None, external_search: bool) -> None:
-        self.pending_provider_token = provider_token or self.provider_token or secrets.token_hex(32)
+        self.pending_provider_token = provider_token or self.pending_provider_token or self.provider_token or secrets.token_hex(32)
         self.pending_external_search = external_search
 
     def confirm_update(self) -> None:
         self.provider_token = self.pending_provider_token
         self.external_search = self.pending_external_search
         self.connected_at = datetime.now(timezone.utc).isoformat()
-        self.discard_update()
+        self._clear_pending()
 
-    def discard_update(self) -> None:
+    def discard_update(self, previous_pending: tuple[str | None, bool]) -> None:
+        self.pending_provider_token, self.pending_external_search = previous_pending
+
+    def _clear_pending(self) -> None:
         self.pending_provider_token = None
         self.pending_external_search = False
 
@@ -58,7 +68,7 @@ class LoyaltyInstallation:
         их нужно передать заново. Токен при этом сохраняется.
         """
         self.connected_at = None
-        self.discard_update()
+        self._clear_pending()
 
 
 class LoyaltyInstallationRepository(Protocol):

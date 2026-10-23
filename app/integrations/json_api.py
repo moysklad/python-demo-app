@@ -3,7 +3,19 @@ from __future__ import annotations
 from typing import Any
 
 from app.config import AppConfig
-from app.integrations.http_client import HttpClient
+from app.integrations.http_client import HttpClient, HttpJsonResponse
+
+# Сценарий отвечает МоемуСкладу не дольше 10 секунд, поэтому объект запрашивается один раз
+# и с общим бюджетом времени на ожидание лимитера и сам запрос.
+SCENARIO_OBJECT_BUDGET_SECONDS = 5
+
+# objectType из сценария — имя сущности в МоемСкладе; в URL JSON API оно пишется строчными,
+# кроме контрагента: он приходит как Company, а ресурс называется counterparty.
+JSON_API_ENTITY_BY_OBJECT_TYPE = {"Company": "counterparty"}
+
+
+def json_api_entity(object_type: str) -> str:
+    return JSON_API_ENTITY_BY_OBJECT_TYPE.get(object_type, object_type.lower())
 
 
 class JsonApi:
@@ -42,6 +54,16 @@ class JsonApi:
             f"{self._config.moysklad_json_api_endpoint_url}/entity/{entity}/{object_id}",
             self._access_token,
             service_name="json-api",
+        )
+
+    def get_scenario_object(self, entity: str, object_id: str) -> HttpJsonResponse:
+        return self._http_client.request_json_detailed(
+            "GET",
+            f"{self._config.moysklad_json_api_endpoint_url}/entity/{entity}/{object_id}",
+            self._access_token,
+            service_name="json-api",
+            retryable=False,
+            budget=SCENARIO_OBJECT_BUDGET_SECONDS,
         )
 
 

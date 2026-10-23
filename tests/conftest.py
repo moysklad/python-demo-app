@@ -8,6 +8,7 @@ import jwt
 import pytest
 
 from app.config import AppConfig
+from app.integrations.http_client import HttpJsonResponse
 from app.integrations.vendor_api import UserContextExchangeResult, VendorApiUserContext
 
 
@@ -60,6 +61,8 @@ class FakeVendorApi:
 class FakeJsonApi:
     def __init__(self) -> None:
         self.object_response: dict[str, Any] | None = {"id": "object-1", "name": "Документ"}
+        self.object_status: int | None = 200
+        self.requested_entities: list[str] = []
         self.stores_successful = True
         self.stores_retries = 0
 
@@ -68,6 +71,12 @@ class FakeJsonApi:
 
     def get_object(self, entity: str, object_id: str) -> dict[str, Any] | None:
         return self.object_response
+
+    def get_scenario_object(self, entity: str, object_id: str) -> HttpJsonResponse:
+        self.requested_entities.append(entity)
+        if self.object_status is None:
+            return HttpJsonResponse(status_code=None, json_body=None, successful=False)
+        return HttpJsonResponse(status_code=self.object_status, json_body=self.object_response, successful=self.object_status < 300)
 
     def stores_with_retries(self) -> tuple[dict[str, Any] | None, int]:
         stores = {"rows": []} if self.stores_successful else None
@@ -86,3 +95,37 @@ def vendor_auth_header(secret: str, jti: str = "jti-1") -> dict[str, str]:
     now = int(time.time())
     token = jwt.encode({"sub": "local-dev-app-uid", "iat": now, "exp": now + 300, "jti": jti}, secret, algorithm="HS256")
     return {"Authorization": f"Bearer {token}"}
+
+
+def create_client(
+    app_config: AppConfig,
+    *,
+    app_repository: Any = None,
+    vendor_api: FakeVendorApi | None = None,
+    json_api_factory: FakeJsonApiFactory | None = None,
+    **extra: Any,
+):
+    """Flask test client с фейками вместо внешних API: общая склейка для интеграционных тестов."""
+    from app.factory import create_app
+
+    from tests.memory_repositories import MemoryAppInstanceRepository, MemoryJwtReplayRepository
+
+    app = create_app(
+        app_config,
+        app_repository=app_repository or MemoryAppInstanceRepository(),
+        jwt_replay_repository=MemoryJwtReplayRepository(),
+        vendor_api=vendor_api or FakeVendorApi(),
+        json_api_factory=json_api_factory or FakeJsonApiFactory(),
+        **extra,
+    )
+    return app.test_client()
+
+
+def bootstrap_iframe(client, page: str | None = "iframe") -> dict:
+    """Обмен одноразового токена на контекст: ответ POST /entry/user-context с pageData страницы."""
+    body: dict = {"token": "opaque-token-1"}
+    if page is not None:
+        body["page"] = page
+    response = client.post("/entry/user-context", json=body)
+    assert response.status_code == 200, response.get_data(as_text=True)
+    return response.get_json()

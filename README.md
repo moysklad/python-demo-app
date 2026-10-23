@@ -6,6 +6,8 @@
 - Активация и деактивация решения через Vendor API
 - Генерация `descriptor.xml` для публикации в каталоге
 - Основной iframe на React и `@moysklad/uikit`: настройки решения, программа лояльности, примеры UI Kit
+- Окно чатов на том же протоколе контекста пользователя: состояние решения и журнал действий из сценариев
+- Обработка действий из сценариев МоегоСклада (модуль `app/scenario`, см. [README](app/scenario/README.md))
 - Отображение мобильной iframe-страницы для проверки возможностей WebView
 - Получение контекста пользователя для iframe/виджетов по одноразовому токену из JS Widget SDK с кешированием в server-side сессии
 - Сохранение настроек решения и обновление статуса во внешнем Vendor API
@@ -97,6 +99,7 @@ python -m app.cli.generate_descriptor
 
 Окна и виджеты:
 - `GET /entry/iframe-main`
+- `GET /entry/iframe-chat`
 - `GET /entry/iframe-mobile?contextKey=...`
 - `GET /entry/widget-customerorder`
 - `GET /entry/widget-invoiceout`
@@ -108,6 +111,7 @@ Backend-запросы из iframe/виджетов:
 - `POST /utils/get-object?entity=...` — получение открытого объекта для виджета, параметры `contextNonce` и `objectId` передаются в теле запроса
 - `POST /utils/stores` — один запрос списка складов с количеством ретраев; iframe вызывает endpoint от 1 до 1000 раз, требуется право администратора и `contextNonce`
 - `POST /utils/connect-loyalty` — передача настроек Loyalty API в МойСклад, требуется право администратора и `contextNonce`
+- `POST /utils/scenario-events` — журнал действий из сценариев для окна чатов, требует `contextNonce`
 
 Loyalty API (вызывает МойСклад, авторизация по заголовку `Lognex-Discount-API-Auth-Token`):
 - `POST /loyalty/counterparty`, `GET /loyalty/counterparty?search=...`, `POST /loyalty/counterparty/detail`
@@ -118,6 +122,7 @@ Vendor API:
 - `DELETE /api/moysklad/vendor/1.0/apps/<appId>/<accountId>`
 - `PUT /api/moysklad/vendor/1.0/apps/<appId>/<accountId>/event`
 - `POST /api/moysklad/vendor/1.0/apps/<appId>/<accountId>/button`
+- `POST /api/moysklad/vendor/1.0/apps/<appId>/<accountId>/scenario`
 
 ## Хранение состояния
 
@@ -126,6 +131,7 @@ Runtime-состояние хранится в SQLite-файле `APP_DB_PATH` �
 - `sessions` — server-side сессии Flask.
 - `jwt` — replay-маркеры service JWT `jti` до истечения `exp`.
 - `loyalty_installation` — подключение программы лояльности: токен провайдера, режим внешнего поиска и момент, когда МойСклад принял настройки.
+- `scenario_event` — последние 50 срабатываний действий из сценариев на аккаунт: действие, тип события, объект и ответ решения.
 
 Access token, токен провайдера лояльности и session payload сохраняются в базе в зашифрованном виде через `APP_ENCRYPT_KEY`. При смене ключа уже сохраненные данные не смогут расшифроваться.
 
@@ -150,17 +156,17 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 
 ## Работа с контекстом пользователя
 
-Основной iframe и виджеты используют протокол `user-context`: в дескрипторе у них указаны
+Основной iframe, окно чатов и виджеты используют протокол `user-context`: в дескрипторе у них указаны
 `<uses><user-context/></uses>` и атрибут `useContextKey="false"`, поэтому МойСклад не передает `contextKey` в URL.
 
 Последовательность работы:
-- Хост-окно открывает `GET /entry/iframe-main` или `GET /entry/widget-...` без параметров. Страница отдается без персональных данных.
+- Хост-окно открывает `GET /entry/iframe-main`, `GET /entry/iframe-chat` или `GET /entry/widget-...` без параметров. Страница отдается без персональных данных.
 - После загрузки браузер вызывает `requestUserContextToken()` из `@moysklad/js-widget-sdk` (версия 1.3.0 и новее).
 - Одноразовый opaque-токен немедленно помещается в JSON body `{ "token": "..." }` запроса `POST /entry/user-context`. Токен нигде не отображается, браузерная переменная очищается сразу после создания запроса.
 - Backend вызывает `POST {MOYSKLAD_VENDOR_API_ENDPOINT_URL}/context/user` под service JWT. Тело этого запроса в логи не пишется.
 - Zeus возвращает `{accountId, userId, userUid, role}`. Известные роли: `admin`, `cashier`, `worker`, `individual`. Неизвестная роль не ломает обмен: пользователь считается не-админом.
-- Backend сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt` и возвращает UI контекст пользователя, `contextNonce` и, для основного iframe (`"page": "iframe"` в запросе), данные страницы. Токен не сохраняется и не возвращается.
-- Запросы из iframe/виджета (`POST /utils/update-settings`, `POST /utils/get-object`, `POST /utils/stores`) передают `contextNonce`.
+- Backend сохраняет в server-side сессии активный контекст пользователя: `uid`, `accountId`, `fio`, `isAdmin`, `contextNonce`, `createdAt`, `expiresAt` и возвращает UI контекст пользователя, `contextNonce` и данные страницы для основного iframe (`"page": "iframe"` в запросе) или окна чатов (`"page": "chat"`). Токен не сохраняется и не возвращается.
+- Запросы из iframe/виджета (`POST /utils/update-settings`, `POST /utils/get-object`, `POST /utils/stores`, `POST /utils/scenario-events`) передают `contextNonce`.
 - Backend принимает запрос только если `contextNonce` совпадает с активным контекстом в текущей сессии. Если `contextNonce` отсутствует, устарел или не совпал, возвращается `401`.
 
 `isAdmin` равен `true` только для роли `admin`. ФИО в новом ответе Vendor API нет, поэтому в интерфейсе показывается `uid`.
@@ -177,6 +183,33 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 - Исходное время жизни сессии (TTL) равно 2 часам (константа USER_CONTEXT_SESSION_TTL_SECONDS).
 - TTL скользящий: пока iframe/виджет делает backend-запросы, сессия продлевается. Если пользователь не совершает никаких действий в течение TTL, то сессия завершается.
 
+## Окно чатов
+
+После перехода решения в статус `Activated` МойСклад показывает его окно в разделе «Чаты». В дескрипторе окно
+описано как `<iframe type="chat" sourceUrl=".../entry/iframe-chat" useContextKey="false">` с `<uses><user-context/></uses>`:
+контекст пользователя оно получает так же, как основной iframe, а другие сервисы хост-окна (попапы, навигация,
+стандартные диалоги) в чатах недоступны.
+
+Отличия от основного iframe, которые учитывает страница (`frontend/src/chat/`):
+- ширина не больше 1096px, горизонтального скролла быть не должно;
+- хост не подстраивает высоту окна: `autoResizeIframe()` не вызывается, страница скроллится сама;
+- окно видно всем пользователям аккаунта, поэтому на нем только чтение: состояние решения и журнал действий из сценариев.
+
+## Действия в сценариях
+
+Блок `<scenario>` дескриптора объявляет действия, которые администратор аккаунта может выбрать на странице
+сценариев МоегоСклада. При срабатывании сценария МойСклад вызывает `POST .../apps/<appId>/<accountId>/scenario`
+под service JWT и передает `actionName`, `actionType` (`ADD`, `MODIFY`, `CHANGE_STATUS`, `OVERDUE`,
+`CHANGE_PRODUCTION_STATE`), `objectId` и `objectType`.
+
+Демо-действия и ответы решения:
+- `log-event` — записывает срабатывание в журнал и отвечает `200`;
+- `fetch-object` — запрашивает объект через JSON API по `objectType`/`objectId`, сохраняет его название; если объект получить не удалось, отвечает `502`, и МойСклад повторит действие по политике retry;
+- `reject` — отвечает `400` с объектом `error`: сообщение `errorMessage` пользователь увидит в истории выполнения сценария.
+
+Ответить нужно быстрее 10 секунд: иначе МойСклад считает попытку неуспешной и повторяет запрос. Журнал последних
+срабатываний показывает окно чатов. Подробности в [README модуля](app/scenario/README.md).
+
 ## Структура проекта
 
 Основные entrypoints:
@@ -186,14 +219,17 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 
 API и интеграции:
 - `app/services/vendor_endpoint.py` — обработка lifecycle событий и button callbacks
+- `app/scenario/` — обработчик действий из сценариев и журнал для окна чатов, см. [README](app/scenario/README.md)
 - `app/services/buttons.py` — формирование action-ответов для кнопок
 - `app/integrations/vendor_api.py` — клиент Vendor API (обмен токена user-context, context по `contextKey` для мобильного iframe, status)
 - `app/integrations/json_api.py` — клиент JSON API 1.2
 
 UI и entry:
-- `frontend/` — основной iframe на React и `@moysklad/uikit`, сборка esbuild в `static/assets/app`
+- `frontend/` — основной iframe и окно чатов на React и `@moysklad/uikit`, сборка esbuild в `static/assets/app`
+- `frontend/src/chat/` — окно чатов: состояние решения и журнал действий из сценариев (`frontend/src/scenario/`)
+- `frontend/src/ui/prevent-focus-scroll.ts` — отключает прокрутку по фокусу: autoFocus в дропдаунах кита иначе скроллит страницу МоегоСклада
 - `frontend/src/uikit-examples/` — вкладка «Примеры UI Kit», см. [README](frontend/src/uikit-examples/README.md)
-- `templates/entry/*` — Jinja-шаблоны iframe/widget/popup страниц
+- `templates/entry/*` — Jinja-шаблоны iframe, окна чатов, widget и popup страниц
 - `static/assets/entry/*` — стили и скрипты виджетов, popup и мобильного iframe
 - `app/services/entry.py` — подготовка view models для entry-страниц
 
@@ -218,8 +254,10 @@ CLI-утилиты:
 
 ## Запуск тестов
 
-Проект включает в себя базовый набор проверок поведения. 
-Для запуска тестов выполните команды:
+Тесты — спецификация публичного контракта, а не цель покрытия: на контракт и важный отказ хватает
+одного-двух тестов. Контракты модулей лежат рядом с модулями (`tests/loyalty/`, `tests/scenario/`),
+склейка приложения, HTTP и SQLite — в `tests/integration/`, остальное в корне `tests/`
+(подробнее в [AGENTS.md](AGENTS.md)). Для запуска выполните команды:
 
 ```bash
 python -m compileall app tests

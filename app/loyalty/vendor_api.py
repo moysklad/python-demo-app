@@ -16,7 +16,8 @@ VENDOR_API_ERROR_HINTS = {
 
 @dataclass(frozen=True)
 class LoyaltySettingsResult:
-    # rejected — МойСклад точно не принял настройки; unknown — ответа нет или 5xx, настройки могли примениться
+    # rejected — МойСклад точно не принял настройки (4xx с описанием ошибки);
+    # unknown — ответа нет, 5xx или ответ без описания: настройки могли примениться
     outcome: Literal["ok", "rejected", "unknown"]
     code: int | None = None
     message: str = ""
@@ -52,7 +53,7 @@ class LoyaltyVendorApi:
         errors = body.get("errors") if isinstance(body, dict) else None
         error = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else None
         if error is None or not error.get("error"):
-            return LoyaltySettingsResult(outcome="rejected", message=f"Vendor API ответил статусом {response.status_code}")
+            return LoyaltySettingsResult(outcome="unknown", message=f"Vendor API ответил статусом {response.status_code} без описания ошибки")
 
         code = error.get("code") if isinstance(error.get("code"), int) else None
         hint = VENDOR_API_ERROR_HINTS.get(code) if code is not None else None

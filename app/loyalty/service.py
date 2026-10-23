@@ -46,6 +46,15 @@ class LoyaltyService:
         app_id = self._config.app_id
         provider_token = raw_provider_token.strip() if isinstance(raw_provider_token, str) else ""
         installation = self._repository.load(app_id, account_id) or LoyaltyInstallation(app_id, account_id)
+        if not installation.can_begin_update(provider_token or None):
+            return ServiceResponse(
+                status_code=409,
+                json_body={
+                    "message": "Исход предыдущего подключения еще не известен: МойСклад мог принять отправленный тогда токен. "
+                    "Повторите подключение с пустым полем токена, чтобы отправить его еще раз."
+                },
+            )
+        pending_before = installation.pending_settings()
         installation.begin_update(provider_token or None, external_search)
         self._repository.save(installation)
 
@@ -63,7 +72,7 @@ class LoyaltyService:
             )
 
         if result.outcome == "rejected":
-            installation.discard_update()
+            installation.discard_update(pending_before)
             self._repository.save(installation)
             code = f"Ошибка {result.code}: " if result.code is not None else ""
             return ServiceResponse(
