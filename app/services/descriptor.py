@@ -5,7 +5,7 @@ from app.config import AppConfig
 from app.scenario.events import SCENARIO_ACTIONS
 
 
-def build_descriptor_xml(config: AppConfig) -> str:
+def build_descriptor_xml(config: AppConfig, *, endpoint_base: str | None = None) -> str:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <ServerApplication xmlns="https://apps-api.moysklad.ru/xml/ns/appstore/app/v2"
                    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -24,7 +24,7 @@ def build_descriptor_xml(config: AppConfig) -> str:
         <iframe type="mobile" sourceUrl="{config.app_base_url}/entry/iframe-mobile"/>
     </iframes>
     <vendorApi>
-        <endpointBase>{config.app_base_url}</endpointBase>
+        <endpointBase>{endpoint_base or config.app_base_url}</endpointBase>
     </vendorApi>
     <loyaltyApi/>
     <access>
