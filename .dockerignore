@@ -1,6 +1,8 @@
 .git
 .venv
 .env
+.env.local
+docker-compose.local.yaml
 tmp
 __pycache__
 *.pyc
