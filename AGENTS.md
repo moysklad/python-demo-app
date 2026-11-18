@@ -15,7 +15,7 @@
   одного-двух тестов; новый тест нужен только там, где поведение не проверяет ни один существующий.
 - Контракт модуля — `tests/<имя>/test_*.py`; интеграционные сценарии модуля лежат там же, docstring модуля
   говорит, что это интеграция. Группа тестов — файл, классы не вводим.
-- Общая склейка приложения, HTTP и SQLite — `tests/integration/`. Фейки внешних API, `create_client()`
+- Общая склейка приложения, HTTP и PostgreSQL — `tests/integration/`. Фейки внешних API, `create_client()`
   и `bootstrap_iframe()` живут в `tests/conftest.py`, in-memory репозитории — в `tests/memory_repositories.py`.
 - Дублировать мелкие утилиты внутри модуля можно; добавлять слои индирекции «на будущее» — нельзя.
 
@@ -49,6 +49,8 @@
 
 ## Команды
 
-- `python -m compileall app tests && pytest` — обязательно перед коммитом.
+- `python -m compileall app tests && pytest` — обязательно перед коммитом. Тестам нужен PostgreSQL:
+  `docker compose up -d postgres` (параметры подключения — `APP_DB_*` из `.env.example`, каждый тест работает в своей схеме).
+- Схема базы меняется только новым файлом `app/repositories/migrations/000N_<имя>.sql`; примененные файлы не редактируются.
 - `python -m app.cli.generate_descriptor` — `descriptor.xml` в stdout.
 - `python -m app` — локальный запуск (нужен `.env`, см. `README.md`).

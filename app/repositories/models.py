@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import Integer, Text
+from sqlalchemy import BigInteger, Integer, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -25,7 +25,7 @@ class JwtRow(Base):
     __tablename__ = "jwt"
 
     jti: Mapped[str] = mapped_column(Text, primary_key=True)
-    expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
 class SessionRow(Base):
@@ -33,4 +33,4 @@ class SessionRow(Base):
 
     sid: Mapped[str] = mapped_column(Text, primary_key=True)
     session_json: Mapped[str] = mapped_column(Text, nullable=False)
-    expires_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[int] = mapped_column(BigInteger, nullable=False)

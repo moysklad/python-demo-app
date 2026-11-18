@@ -27,6 +27,8 @@ def test_load_config_uses_app_config_defaults_for_optional_values():
     assert config.session_cookie_same_site == defaults.session_cookie_same_site
     assert config.session_name == defaults.session_name
     assert config.trust_proxy == defaults.trust_proxy
+    assert config.db_port == defaults.db_port
+    assert config.db_schema == defaults.db_schema
 
 
 def test_configure_logging_installs_sensitive_data_filter():

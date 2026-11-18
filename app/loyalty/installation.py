@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal, Protocol, TypedDict
@@ -49,14 +50,23 @@ class LoyaltyInstallation:
         self.pending_provider_token = provider_token or self.pending_provider_token or self.provider_token or secrets.token_hex(32)
         self.pending_external_search = external_search
 
-    def confirm_update(self) -> None:
-        self.provider_token = self.pending_provider_token
-        self.external_search = self.pending_external_search
-        self.connected_at = datetime.now(timezone.utc).isoformat()
-        self._clear_pending()
+    def confirm_update(self, sent: tuple[str | None, bool]) -> None:
+        """
+        МойСклад принял настройки попытки sent: они становятся действующими, если ожидающий токен все еще ее.
+        Иначе попытку опередила другая и действующее подключение не меняется. Принятый токен при этом остается
+        ожидающим, если провайдер перестал бы его принимать: МойСклад может ходить именно с ним.
+        """
+        if self.pending_provider_token == sent[0]:
+            self.provider_token, self.external_search = sent
+            self.connected_at = datetime.now(timezone.utc).isoformat()
+            self._clear_pending()
+        elif self.pending_provider_token is None and self.provider_token != sent[0]:
+            self.pending_provider_token, self.pending_external_search = sent
 
-    def discard_update(self, previous_pending: tuple[str | None, bool]) -> None:
-        self.pending_provider_token, self.pending_external_search = previous_pending
+    def discard_update(self, sent: tuple[str | None, bool], previous_pending: tuple[str | None, bool]) -> None:
+        """МойСклад отказал попытке sent: возвращаются ожидающие настройки до нее. Если ожидающий токен уже не ее, менять нечего."""
+        if self.pending_provider_token == sent[0]:
+            self.pending_provider_token, self.pending_external_search = previous_pending
 
     def _clear_pending(self) -> None:
         self.pending_provider_token = None
@@ -76,6 +86,11 @@ class LoyaltyInstallationRepository(Protocol):
         ...
 
     def find_by_token(self, token: str) -> LoyaltyInstallation | None:
+        ...
+
+    def update_locked(
+        self, app_id: str, account_id: str, change: Callable[[LoyaltyInstallation], bool]
+    ) -> LoyaltyInstallation:
         ...
 
     def save(self, installation: LoyaltyInstallation) -> None:

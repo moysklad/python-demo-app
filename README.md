@@ -31,18 +31,22 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env
+docker compose up -d postgres
 (cd frontend && npm ci && npm run build)
 python -m app
 ```
 
+Состояние решения хранится в PostgreSQL: `docker compose up -d postgres` поднимает локальный сервер
+с параметрами из `.env.example` (`APP_DB_*`), схему таблиц приложение создает само при старте.
+Если порт 5432 занят, задайте другой: `APP_DB_PORT=5433 docker compose up -d postgres` и то же значение в `.env`.
+
 Основной iframe собирается из `frontend/` (Node.js 24) в `static/assets/app`. При правках фронта
 держите запущенной пересборку: `cd frontend && npm run watch`.
 
-Либо запустите решение в Docker:
+Либо запустите решение целиком в Docker (PostgreSQL и приложение):
 
 ```bash
-docker build -t python-demo-app:local .
-docker run --rm -p 8080:8080 --env-file .env python-demo-app:local
+docker compose up --build
 ```
 
 Проверка:
@@ -63,9 +67,10 @@ python -m app.cli.generate_descriptor
 - `PORT` — порт, который слушает процесс внутри контейнера/локального процесса.
 - `APP_BASE_URL` — публичный внешний URL приложения, который попадает в `descriptor.xml`.
 - `APP_ID`, `APP_UID`, `APP_SECRET_KEY` — параметры идентификации решения из личного кабинета.
-- `APP_ENCRYPT_KEY` — ключ шифрования чувствительных полей в SQLite, ровно 64 hex-символа.
+- `APP_ENCRYPT_KEY` — ключ шифрования чувствительных полей в базе данных, ровно 64 hex-символа.
 - `SESSION_SECRET` — секрет подписи server-side сессии.
-- `APP_DB_PATH` — путь к SQLite-файлу с состоянием приложения, server-side сессиями и replay-маркерами JWT.
+- `APP_DB_HOST`, `APP_DB_PORT`, `APP_DB_NAME`, `APP_DB_USER`, `APP_DB_PASSWORD` — подключение к PostgreSQL с состоянием приложения, server-side сессиями и replay-маркерами JWT.
+- `APP_DB_SCHEMA` — схема PostgreSQL, в которой решение хранит свои таблицы. Позволяет нескольким решениям делить одну базу.
 - `TRUST_PROXY` — включает учет `X-Forwarded-*` через `ProxyFix`; локально без proxy можно ставить `0`.
 
 Полный список runtime-переменных:
@@ -84,8 +89,12 @@ python -m app.cli.generate_descriptor
 - `SESSION_COOKIE_SAME_SITE` (`optional`, default: `none`)
 - `SESSION_NAME` (`optional`, default: `connect.sid`)
 - `TRUST_PROXY` (`optional`, default: `1`)
-- `DATA_DIR` (`optional`, default: `./tmp/data`)
-- `APP_DB_PATH` (`optional`, default: `./tmp/data/app.sqlite`)
+- `APP_DB_HOST` (`required`)
+- `APP_DB_PORT` (`optional`, default: `5432`)
+- `APP_DB_NAME` (`required`)
+- `APP_DB_USER` (`required`)
+- `APP_DB_PASSWORD` (`optional`, default: пусто)
+- `APP_DB_SCHEMA` (`optional`, default: `public`; строчные буквы, цифры и подчеркивания)
 
 ## CLI утилиты
 
@@ -126,7 +135,7 @@ Vendor API:
 
 ## Хранение состояния
 
-Runtime-состояние хранится в SQLite-файле `APP_DB_PATH` в таблицах:
+Runtime-состояние хранится в PostgreSQL (`APP_DB_*`) в схеме `APP_DB_SCHEMA` в таблицах:
 - `account_application` — состояние установки по паре `appId`/`accountId`: сообщение настроек, выбранный склад, access token, статус и дату обновления.
 - `sessions` — server-side сессии Flask.
 - `jwt` — replay-маркеры service JWT `jti` до истечения `exp`.
@@ -135,7 +144,9 @@ Runtime-состояние хранится в SQLite-файле `APP_DB_PATH` �
 
 Access token, токен провайдера лояльности и session payload сохраняются в базе в зашифрованном виде через `APP_ENCRYPT_KEY`. При смене ключа уже сохраненные данные не смогут расшифроваться.
 
-SQLite-хранилища работают через SQLAlchemy. Приложение использует общий набор соединений; на время операции берется свободное соединение, а ожидание ограничено 5 секундами.
+Схему создает само приложение при старте (`app/repositories/migrations.py`): SQL-файлы из `app/repositories/migrations/` применяются по порядку имен, примененные версии записываются в таблицу `schema_migrations`. Запуск идет под advisory lock PostgreSQL, поэтому несколько одновременно стартующих экземпляров не мешают друг другу. Чтобы изменить схему, добавьте следующий по номеру файл `000N_<что_меняется>.sql`; уже примененные файлы не редактируются. Пока база недоступна, приложение повторяет попытку подключения до 30 раз с паузой в секунду.
+
+Хранилища работают через SQLAlchemy и драйвер `psycopg`. Приложение использует пул из 5 соединений; на время операции берется свободное соединение, а ожидание ограничено 5 секундами.
 
 ## Сохранение пользовательских настроек
 
@@ -150,7 +161,7 @@ SQLite-хранилища работают через SQLAlchemy. Приложе
 
 Приостановка (`Suspend`) — временное состояние, не равнозначное удалению, поэтому статус `SettingsRequired` при возобновлении возвращается только тогда, когда пользователю действительно нужно перенастроить решение.
 
-Сохранение настроек при удалении (`Uninstall`) — рекомендация, а не требование. Если политика хранения данных требует удалять данные установки при отключении решения, вызовите в обработчике `Uninstall` метод `AppInstanceRepository.delete()` вместо `uninstall()` — он полностью удаляет строку установки (`app/services/vendor_endpoint.py`, `app/repositories/sqlite.py`).
+Сохранение настроек при удалении (`Uninstall`) — рекомендация, а не требование. Если политика хранения данных требует удалять данные установки при отключении решения, вызовите в обработчике `Uninstall` метод `AppInstanceRepository.delete()` вместо `uninstall()` — он полностью удаляет строку установки (`app/services/vendor_endpoint.py`, `app/repositories/postgres.py`).
 
 Повторный `DELETE` идемпотентен: `204 No Content`, если состояние уже соответствует запросу. Первый `Suspend` и `Uninstall` (в том числе после `Suspend`) возвращают `200`, потому что статус установки меняется. Неизвестный `cause` — `400`.
 
@@ -240,7 +251,8 @@ UI и entry:
 
 Состояние и безопасность:
 - `app/domain/app_instance.py` — модель состояния установки приложения
-- `app/repositories/sqlite.py` — SQLite-хранение установок, server-side сессий и replay-маркеров JWT
+- `app/repositories/postgres.py` — хранение установок, server-side сессий и replay-маркеров JWT в PostgreSQL
+- `app/repositories/migrations.py`, `app/repositories/migrations/*.sql` — подключение к PostgreSQL и миграции схемы
 - `app/services/user_context.py` — bootstrap user context по одноразовому токену и проверка backend-запросов по `contextNonce`
 - `app/security/crypto.py` — утилиты шифрования чувствительных данных
 - `app/security/jwt_tools.py` — генерация и проверка service JWT
@@ -258,10 +270,12 @@ CLI-утилиты:
 
 Тесты — спецификация публичного контракта, а не цель покрытия: на контракт и важный отказ хватает
 одного-двух тестов. Контракты модулей лежат рядом с модулями (`tests/loyalty/`, `tests/scenario/`),
-склейка приложения, HTTP и SQLite — в `tests/integration/`, остальное в корне `tests/`
-(подробнее в [AGENTS.md](AGENTS.md)). Для запуска выполните команды:
+склейка приложения, HTTP и PostgreSQL — в `tests/integration/`, остальное в корне `tests/`
+(подробнее в [AGENTS.md](AGENTS.md)). Тестам нужен тот же PostgreSQL, что и приложению (см. «Запуск»),
+каждый тест работает в собственной схеме и удаляет ее за собой:
 
 ```bash
+docker compose up -d postgres
 python -m compileall app tests
 pytest
 ```

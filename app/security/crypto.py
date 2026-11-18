@@ -2,21 +2,11 @@ from __future__ import annotations
 
 import base64
 import os
-from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-DIR_MODE = 0o700
 ENCRYPT_PREFIX = "enc:v1:"
-
-
-def ensure_private_dir(directory: Path) -> None:
-    directory.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
-    try:
-        directory.chmod(DIR_MODE)
-    except OSError:
-        pass
 
 
 def encrypt_sensitive(plain_text: str, raw_key: str) -> str:
