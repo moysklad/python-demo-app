@@ -1,22 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from sqlalchemy import create_engine, delete, event, select, update
-from sqlalchemy.dialects.sqlite import insert
+from cryptography.exceptions import InvalidTag
+from sqlalchemy import delete, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.domain.app_instance import AppInstance, AppStatus
-from app.repositories.models import AccountApplicationRow, Base, JwtRow, SessionRow
-from app.security.crypto import decrypt_sensitive, encrypt_sensitive, ensure_private_dir
+from app.repositories.models import AccountApplicationRow, JwtRow, SessionRow
+from app.security.crypto import decrypt_sensitive, encrypt_sensitive
 
-SQLITE_POOL_SIZE = 5
-SQLITE_CONNECTION_CHECKOUT_TIMEOUT_SECONDS = 5.0
+logger = logging.getLogger(__name__)
 
 # минимальный интервал удаления старых записей
 PRUNE_INTERVAL_SECONDS = 60.0
@@ -24,42 +24,13 @@ PRUNE_INTERVAL_SECONDS = 60.0
 PRUNE_MAX_ROWS_PER_RUN = 1000
 
 
-def create_sqlite_engine(filename: Path) -> Engine:
-    ensure_private_dir(filename.parent)
-    engine = create_engine(
-        f"sqlite:///{filename}",
-        connect_args={"check_same_thread": False},
-        pool_size=SQLITE_POOL_SIZE,
-        max_overflow=0,
-        pool_timeout=SQLITE_CONNECTION_CHECKOUT_TIMEOUT_SECONDS,
-        pool_pre_ping=True,
-    )
-
-    @event.listens_for(engine, "connect")
-    def configure_connection(dbapi_connection: Any, _: Any) -> None:
-        cursor = dbapi_connection.cursor()
-        try:
-            cursor.execute("PRAGMA busy_timeout=5000")
-            cursor.execute("PRAGMA journal_mode=WAL")
-        finally:
-            cursor.close()
-
-    Base.metadata.create_all(engine)
-    return engine
-
-
-def create_sqlite_session_factory(engine: Engine) -> sessionmaker[Session]:
+def create_session_factory(engine: Engine) -> sessionmaker[Session]:
     return sessionmaker(bind=engine, expire_on_commit=False)
 
 
-class SqliteAppInstanceRepository:
-    def __init__(
-            self,
-            filename: Path,
-            encrypt_key: str,
-            session_factory: sessionmaker[Session] | None = None,
-    ) -> None:
-        self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
+class PostgresAppInstanceRepository:
+    def __init__(self, session_factory: sessionmaker[Session], encrypt_key: str) -> None:
+        self._session_factory = session_factory
         self._encrypt_key = encrypt_key
 
     def load(self, app_id: str, account_id: str) -> AppInstance | None:
@@ -77,10 +48,23 @@ class SqliteAppInstanceRepository:
             account_id=row.account_id,
             info_message=row.info_message or "",
             store=row.store or "",
-            access_token=decrypt_sensitive(row.access_token, self._encrypt_key) if row.access_token else "",
+            access_token=self._decrypt_access_token(row),
             status=_known_status(row.status),
             updated_at=_parse_timestamp_ms(row.updated_at),
         )
+
+    def _decrypt_access_token(self, row: AccountApplicationRow) -> str:
+        if not row.access_token:
+            return ""
+        try:
+            return decrypt_sensitive(row.access_token, self._encrypt_key)
+        except InvalidTag:
+            logger.warning(
+                "Access token of app %s on account %s is encrypted with another APP_ENCRYPT_KEY, treating it as missing",
+                row.application_id,
+                row.account_id,
+            )
+            return ""
 
     def save(self, app: AppInstance) -> None:
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -100,7 +84,9 @@ class SqliteAppInstanceRepository:
             index_elements=[AccountApplicationRow.account_id, AccountApplicationRow.application_id],
             set_={
                 "status": statement.excluded.status,
-                "access_token": statement.excluded.access_token,
+                "access_token": AccountApplicationRow.access_token
+                if access_token is None and self._has_unreadable_access_token(app)
+                else statement.excluded.access_token,
                 "info_message": statement.excluded.info_message,
                 "store": statement.excluded.store,
                 "updated_at": statement.excluded.updated_at,
@@ -109,6 +95,14 @@ class SqliteAppInstanceRepository:
 
         with self._session_factory.begin() as session:
             session.execute(statement)
+
+    def _has_unreadable_access_token(self, app: AppInstance) -> bool:
+        # Токен, зашифрованный другим APP_ENCRYPT_KEY, читается как отсутствующий. Сохранение без нового токена
+        # не должно затирать его шифротекст: ключ могли подменить по ошибке, после возврата токен снова прочитается.
+        with self._session_factory() as session:
+            row = session.get(AccountApplicationRow, {"account_id": app.account_id, "application_id": app.app_id})
+
+        return row is not None and bool(row.access_token) and self._decrypt_access_token(row) == ""
 
     def uninstall(self, app_id: str, account_id: str) -> None:
         """
@@ -144,19 +138,19 @@ class SqliteAppInstanceRepository:
             )
 
 
-class SqliteJwtReplayRepository:
-    def __init__(self, filename: Path, session_factory: sessionmaker[Session] | None = None) -> None:
-        self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
+class PostgresJwtReplayRepository:
+    def __init__(self, session_factory: sessionmaker[Session]) -> None:
+        self._session_factory = session_factory
         self._next_prune_at = 0.0
 
     def register(self, jti: str, exp_unix_seconds: int) -> bool:
         expires_at_ms = exp_unix_seconds * 1000
         with self._session_factory.begin() as session:
             self._maybe_prune_expired_jti(session)
-            cursor = session.execute(
-                insert(JwtRow).values(jti=jti, expires_at=expires_at_ms).on_conflict_do_nothing()
-            )
-            return cursor.rowcount == 1
+            inserted = session.execute(
+                insert(JwtRow).values(jti=jti, expires_at=expires_at_ms).on_conflict_do_nothing().returning(JwtRow.jti)
+            ).first()
+            return inserted is not None
 
     def _maybe_prune_expired_jti(self, session: Session) -> None:
         now = time.monotonic()
@@ -168,14 +162,9 @@ class SqliteJwtReplayRepository:
         session.execute(delete(JwtRow).where(JwtRow.jti.in_(expired_jti)))
 
 
-class SqliteSessionRepository:
-    def __init__(
-            self,
-            filename: Path,
-            encrypt_key: str,
-            session_factory: sessionmaker[Session] | None = None,
-    ) -> None:
-        self._session_factory = session_factory or create_sqlite_session_factory(create_sqlite_engine(filename))
+class PostgresSessionRepository:
+    def __init__(self, session_factory: sessionmaker[Session], encrypt_key: str) -> None:
+        self._session_factory = session_factory
         self._encrypt_key = encrypt_key
         self._next_prune_at = 0.0
 
@@ -190,7 +179,11 @@ class SqliteSessionRepository:
                 session.delete(row)
                 return None
 
-            return json.loads(decrypt_sensitive(row.session_json, self._encrypt_key))
+            try:
+                return json.loads(decrypt_sensitive(row.session_json, self._encrypt_key))
+            except InvalidTag:
+                logger.warning("Session is encrypted with another APP_ENCRYPT_KEY, treating it as missing")
+                return None
 
     def save(self, sid: str, session_data: dict[str, Any], expires_at_ms: int) -> None:
         statement = insert(SessionRow).values(

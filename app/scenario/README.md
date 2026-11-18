@@ -7,7 +7,7 @@
 
 - Блок `<scenario>` дескриптора с действиями решения (`app/services/descriptor.py` берет список из `events.py`).
 - Обработчик `POST .../apps/{appId}/{accountId}/scenario` под service JWT с тремя вариантами ответа Vendor API.
-- Журнал срабатываний в SQLite и его показ в окне чатов (`frontend/src/scenario/ScenarioJournal.tsx`).
+- Журнал срабатываний в PostgreSQL и его показ в окне чатов (`frontend/src/scenario/ScenarioJournal.tsx`).
 
 ## Платформенные особенности (важно)
 
@@ -24,7 +24,7 @@
 | Файл                                           | Роль                                                                      |
 |------------------------------------------------|---------------------------------------------------------------------------|
 | `events.py`                                    | Список действий, модель события и его представление для фронта            |
-| `repository.py`                                | SQLite-журнал, на аккаунт хранятся последние 50 срабатываний              |
+| `repository.py`                                | PostgreSQL-журнал, на аккаунт хранятся последние 50 срабатываний |
 | `service.py`                                   | Обработка действия: `log-event`, `fetch-object`, `reject`; данные журнала |
 | `routes.py`                                    | Обработчик vendorApi и `POST /utils/scenario-events` для окна чатов       |
 | `frontend/src/scenario/ScenarioJournal.tsx`    | Журнал: список действий, таблица срабатываний, подробности по клику       |

@@ -1,20 +1,47 @@
 from __future__ import annotations
 
+import os
+import secrets
 import time
-from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import jwt
 import pytest
+from flask import Flask
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
 
 from app.config import AppConfig
 from app.integrations.http_client import HttpJsonResponse
 from app.integrations.vendor_api import UserContextExchangeResult, VendorApiUserContext
+from app.repositories import migrations
+from app.repositories.migrations import apply_migrations, create_postgres_engine
+
+TEST_DB = {
+    "db_host": os.environ.get("APP_DB_HOST", "localhost"),
+    "db_port": int(os.environ.get("APP_DB_PORT", "5432")),
+    "db_name": os.environ.get("APP_DB_NAME", "python_demo_app"),
+    "db_user": os.environ.get("APP_DB_USER", "python_demo_app"),
+    "db_password": os.environ.get("APP_DB_PASSWORD", "python_demo_app"),
+}
+
+_created_apps: list[Flask] = []
+
+
+@pytest.fixture(autouse=True)
+def _fail_fast_without_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(migrations, "STARTUP_CONNECT_ATTEMPTS", 1)
+
+
+def _drop_schema(engine: Engine, schema: str) -> None:
+    with engine.begin() as connection:
+        connection.execute(text(f"drop schema if exists {schema} cascade"))
 
 
 @pytest.fixture
-def app_config(tmp_path: Path) -> AppConfig:
-    return AppConfig(
+def app_config() -> Iterator[AppConfig]:
+    """Каждый тест работает в своей схеме PostgreSQL, после теста схема удаляется."""
+    config = AppConfig(
         app_id="local-dev-app-id",
         app_uid="local-dev-app-uid",
         secret_key="local-dev-secret-key-32-characters",
@@ -24,9 +51,25 @@ def app_config(tmp_path: Path) -> AppConfig:
         session_cookie_secure=False,
         session_cookie_same_site="lax",
         trust_proxy=0,
-        data_dir=tmp_path,
-        app_db_path=tmp_path / "app.sqlite",
+        db_schema=f"test_{secrets.token_hex(4)}",
+        **TEST_DB,
     )
+    yield config
+
+    if _created_apps:
+        _drop_schema(_created_apps[0].extensions["db_engine"], config.db_schema)
+    for flask_app in _created_apps:
+        flask_app.extensions["db_engine"].dispose()
+    _created_apps.clear()
+
+
+@pytest.fixture
+def db_engine(app_config: AppConfig) -> Iterator[Engine]:
+    engine = create_postgres_engine(app_config)
+    apply_migrations(engine, app_config.db_schema)
+    yield engine
+    _drop_schema(engine, app_config.db_schema)
+    engine.dispose()
 
 
 class FakeVendorApi:
@@ -118,6 +161,7 @@ def create_client(
         json_api_factory=json_api_factory or FakeJsonApiFactory(),
         **extra,
     )
+    _created_apps.append(app)
     return app.test_client()
 
 

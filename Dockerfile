@@ -12,14 +12,11 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8080 \
-    DATA_DIR=/app/tmp/data \
-    APP_DB_PATH=/app/tmp/data/app.sqlite
+    PORT=8080
 
 WORKDIR /app
 
-RUN addgroup --system app && adduser --system --ingroup app app \
-    && install -d -m 700 -o app -g app /app/tmp/data
+RUN addgroup --system app && adduser --system --ingroup app app
 
 COPY pyproject.toml README.md ./
 COPY app ./app
@@ -33,7 +30,5 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 USER app
 
 EXPOSE 8080
-
-VOLUME ["/app/tmp/data"]
 
 CMD ["sh", "-c", "exec gunicorn 'app:create_app()' --bind 0.0.0.0:${PORT} --threads ${GUNICORN_THREADS:-5}"]

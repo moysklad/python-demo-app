@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -28,6 +29,18 @@ class LoyaltyService:
             "defaultLoyaltyProviderUrl": self.default_provider_url(),
         }
 
+    def _finish_update(self, account_id: str, finish: Callable[[LoyaltyInstallation], None]) -> LoyaltyInstallation:
+        """
+        Завершает попытку под той же блокировкой, что и ее начало. Состояние читается заново:
+        пока шел вызов Vendor API, его могла изменить другая попытка.
+        """
+
+        def change(current: LoyaltyInstallation) -> bool:
+            finish(current)
+            return True
+
+        return self._repository.update_locked(self._config.app_id, account_id, change)
+
     def find_by_token(self, token: str) -> LoyaltyInstallation | None:
         token = token.strip()
         return None if token == "" else self._repository.find_by_token(token)
@@ -45,8 +58,18 @@ class LoyaltyService:
 
         app_id = self._config.app_id
         provider_token = raw_provider_token.strip() if isinstance(raw_provider_token, str) else ""
-        installation = self._repository.load(app_id, account_id) or LoyaltyInstallation(app_id, account_id)
-        if not installation.can_begin_update(provider_token or None):
+        pending_before: tuple[str | None, bool] | None = None
+
+        def begin_update(installation: LoyaltyInstallation) -> bool:
+            nonlocal pending_before
+            if not installation.can_begin_update(provider_token or None):
+                return False
+            pending_before = installation.pending_settings()
+            installation.begin_update(provider_token or None, external_search)
+            return True
+
+        installation = self._repository.update_locked(app_id, account_id, begin_update)
+        if pending_before is None:
             return ServiceResponse(
                 status_code=409,
                 json_body={
@@ -54,13 +77,9 @@ class LoyaltyService:
                     "Повторите подключение с пустым полем токена, чтобы отправить его еще раз."
                 },
             )
-        pending_before = installation.pending_settings()
-        installation.begin_update(provider_token or None, external_search)
-        self._repository.save(installation)
 
-        result = self._vendor_api.update_settings(
-            app_id, account_id, provider_url, installation.pending_provider_token or "", external_search
-        )
+        sent = installation.pending_settings()
+        result = self._vendor_api.update_settings(app_id, account_id, provider_url, sent[0] or "", external_search)
         if result.outcome == "unknown":
             logger.warning("Loyalty settings outcome is unknown for accountId=%s: %s", account_id, result.message)
             return ServiceResponse(
@@ -72,16 +91,14 @@ class LoyaltyService:
             )
 
         if result.outcome == "rejected":
-            installation.discard_update(pending_before)
-            self._repository.save(installation)
+            self._finish_update(account_id, lambda current: current.discard_update(sent, pending_before))
             code = f"Ошибка {result.code}: " if result.code is not None else ""
             return ServiceResponse(
                 status_code=502,
                 json_body={"message": f"Не удалось передать настройки Loyalty API. {code}{result.message}"},
             )
 
-        installation.confirm_update()
-        self._repository.save(installation)
+        installation = self._finish_update(account_id, lambda current: current.confirm_update(sent))
         logger.info("Loyalty settings sent to MoySklad for accountId=%s, externalSearch=%s", account_id, external_search)
         return ServiceResponse(
             json_body={

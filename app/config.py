@@ -5,7 +5,6 @@ import re
 import logging
 from dataclasses import dataclass
 from importlib import metadata
-from pathlib import Path
 from typing import Mapping
 
 from dotenv import load_dotenv
@@ -51,8 +50,12 @@ class AppConfig:
     session_cookie_same_site: str = "none"
     session_name: str = "connect.sid"
     trust_proxy: int = 1
-    data_dir: Path = Path("./tmp/data")
-    app_db_path: Path = Path("./tmp/data/app.sqlite")
+    db_host: str = ""
+    db_port: int = 5432
+    db_name: str = ""
+    db_user: str = ""
+    db_password: str = ""
+    db_schema: str = "public"
 
 
 def load_config(env: Mapping[str, str] | None = None, *, load_dotenv_file: bool = True) -> AppConfig:
@@ -64,9 +67,6 @@ def load_config(env: Mapping[str, str] | None = None, *, load_dotenv_file: bool 
         source = env
 
     defaults = AppConfig()
-    cwd = Path.cwd()
-    data_dir = _resolve_path(cwd, source.get("DATA_DIR", str(defaults.data_dir)))
-    app_db_path = _resolve_path(cwd, source.get("APP_DB_PATH", str(defaults.app_db_path)))
 
     config = AppConfig(
         app_id=_required(source, "APP_ID"),
@@ -96,8 +96,12 @@ def load_config(env: Mapping[str, str] | None = None, *, load_dotenv_file: bool 
         ).lower(),
         session_name=source.get("SESSION_NAME", defaults.session_name),
         trust_proxy=_int_value(source, "TRUST_PROXY", defaults.trust_proxy),
-        data_dir=data_dir,
-        app_db_path=app_db_path,
+        db_host=source.get("APP_DB_HOST", "").strip(),
+        db_port=_int_value(source, "APP_DB_PORT", defaults.db_port),
+        db_name=source.get("APP_DB_NAME", "").strip(),
+        db_user=source.get("APP_DB_USER", "").strip(),
+        db_password=source.get("APP_DB_PASSWORD", ""),
+        db_schema=source.get("APP_DB_SCHEMA", "").strip() or defaults.db_schema,
     )
     validate_config(config)
     return config
@@ -128,6 +132,7 @@ def validate_config(config: AppConfig) -> None:
 
     if config.session_cookie_same_site not in SAME_SITE_VALUES:
         raise ValueError("SESSION_COOKIE_SAME_SITE must be one of lax, strict, none")
+
 
 
 def _required(env: Mapping[str, str], key: str) -> str:
@@ -161,9 +166,3 @@ def _log_level_value(level: str) -> int:
         return logging.ERROR
     return logging.DEBUG
 
-
-def _resolve_path(cwd: Path, value: str) -> Path:
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    return (cwd / path).resolve()

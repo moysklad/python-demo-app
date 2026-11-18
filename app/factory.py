@@ -16,29 +16,28 @@ from app.integrations.http_client import HttpClient
 from app.integrations.json_api import JsonApiFactory
 from app.integrations.vendor_api import VendorApi
 # [feature:loyalty] программа лояльности: модуль app/loyalty.
-from app.loyalty.repository import SqliteLoyaltyInstallationRepository
+from app.loyalty.repository import PostgresLoyaltyInstallationRepository
 from app.loyalty.routes import register_loyalty
 from app.loyalty.service import LoyaltyService
 from app.loyalty.vendor_api import LoyaltyVendorApi
 # [feature:scenario] действия в сценариях: модуль app/scenario.
-from app.scenario.repository import SqliteScenarioEventRepository
+from app.scenario.repository import PostgresScenarioEventRepository
 from app.scenario.routes import register_scenario
 from app.scenario.service import ScenarioService
-from app.repositories.sqlite import (
-    SqliteAppInstanceRepository,
-    SqliteJwtReplayRepository,
-    SqliteSessionRepository,
-    create_sqlite_engine,
-    create_sqlite_session_factory,
+from app.repositories.migrations import apply_migrations, create_postgres_engine, wait_for_database
+from app.repositories.postgres import (
+    PostgresAppInstanceRepository,
+    PostgresJwtReplayRepository,
+    PostgresSessionRepository,
+    create_session_factory,
 )
-from app.security.crypto import ensure_private_dir
 from app.security.jwt_tools import JwtReplayRepository
 from app.services.entry import EntryService
 from app.services.user_context import UserContextService
 from app.services.utils import UtilsService
 from app.services.vendor_endpoint import VendorEndpointService
 from app.web.routes import register_routes
-from app.web.session import SqliteSessionInterface
+from app.web.session import PostgresSessionInterface
 
 
 logger = logging.getLogger(__name__)
@@ -70,7 +69,6 @@ def create_app(
 ) -> Flask:
     runtime_config = config or load_config()
     configure_logging(runtime_config.log_level)
-    ensure_private_dir(runtime_config.data_dir)
 
     root = Path(__file__).resolve().parent.parent
     flask_app = Flask(
@@ -92,25 +90,16 @@ def create_app(
             x_prefix=runtime_config.trust_proxy,
         )
 
-    sqlite_engine = create_sqlite_engine(runtime_config.app_db_path)
-    sqlite_session_factory = create_sqlite_session_factory(sqlite_engine)
-    app_repository = app_repository or SqliteAppInstanceRepository(
-        runtime_config.app_db_path,
-        runtime_config.encrypt_key,
-        sqlite_session_factory,
-    )
-    jwt_replay_repository = jwt_replay_repository or SqliteJwtReplayRepository(
-        runtime_config.app_db_path,
-        sqlite_session_factory,
-    )
-    session_repository = SqliteSessionRepository(
-        runtime_config.app_db_path,
-        runtime_config.encrypt_key,
-        sqlite_session_factory,
-    )
-    flask_app.session_interface = SqliteSessionInterface(runtime_config, session_repository)
-    flask_app.extensions["sqlite_engine"] = sqlite_engine
-    atexit.register(sqlite_engine.dispose)
+    db_engine = create_postgres_engine(runtime_config)
+    wait_for_database(db_engine)
+    apply_migrations(db_engine, runtime_config.db_schema)
+    session_factory = create_session_factory(db_engine)
+    app_repository = app_repository or PostgresAppInstanceRepository(session_factory, runtime_config.encrypt_key)
+    jwt_replay_repository = jwt_replay_repository or PostgresJwtReplayRepository(session_factory)
+    session_repository = PostgresSessionRepository(session_factory, runtime_config.encrypt_key)
+    flask_app.session_interface = PostgresSessionInterface(runtime_config, session_repository)
+    flask_app.extensions["db_engine"] = db_engine
+    atexit.register(db_engine.dispose)
 
     http_client = HttpClient()
     vendor_api = vendor_api or VendorApi(runtime_config, http_client)
@@ -118,13 +107,13 @@ def create_app(
     user_context_service = UserContextService(vendor_api)
     loyalty_service = LoyaltyService(
         runtime_config,
-        SqliteLoyaltyInstallationRepository(runtime_config.encrypt_key, sqlite_session_factory),
+        PostgresLoyaltyInstallationRepository(runtime_config.encrypt_key, session_factory),
         loyalty_vendor_api or LoyaltyVendorApi(runtime_config, http_client),
     )
     scenario_service = ScenarioService(
         runtime_config,
         app_repository,
-        SqliteScenarioEventRepository(sqlite_session_factory),
+        PostgresScenarioEventRepository(session_factory),
         json_api_factory,
     )
     services = AppServices(

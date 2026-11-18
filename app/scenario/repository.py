@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, Text, delete, select
+from sqlalchemy import BigInteger, Identity, Text, delete, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.repositories.models import Base
@@ -12,7 +12,7 @@ from app.scenario.events import SCENARIO_EVENTS_LIMIT, ScenarioEvent
 class ScenarioEventRow(Base):
     __tablename__ = "scenario_event"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     application_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     account_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     action_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -25,7 +25,7 @@ class ScenarioEventRow(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
-class SqliteScenarioEventRepository:
+class PostgresScenarioEventRepository:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self._session_factory = session_factory
 

@@ -10,7 +10,7 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from werkzeug.datastructures import CallbackDict
 
 from app.config import AppConfig
-from app.repositories.sqlite import SqliteSessionRepository
+from app.repositories.postgres import PostgresSessionRepository
 from app.services.user_context import USER_CONTEXT_SESSION_TTL_SECONDS
 
 
@@ -25,10 +25,10 @@ class ServerSideSession(CallbackDict[str, Any], SessionMixin):
         self.modified = False
 
 
-class SqliteSessionInterface(SessionInterface):
+class PostgresSessionInterface(SessionInterface):
     pickle_based = False
 
-    def __init__(self, config: AppConfig, repository: SqliteSessionRepository) -> None:
+    def __init__(self, config: AppConfig, repository: PostgresSessionRepository) -> None:
         self._config = config
         self._repository = repository
         self._serializer = URLSafeSerializer(config.session_secret, salt="python-demo-app-session")

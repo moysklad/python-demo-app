@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from datetime import datetime, timezone
 
-from sqlalchemy import Integer, Text, select
-from sqlalchemy.dialects.sqlite import insert
+from cryptography.exceptions import InvalidTag
+from sqlalchemy import Integer, Text, select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from app.loyalty.installation import LoyaltyInstallation
 from app.repositories.models import Base
 from app.security.crypto import decrypt_sensitive, encrypt_sensitive
+
+logger = logging.getLogger(__name__)
 
 
 class LoyaltyInstallationRow(Base):
@@ -27,7 +32,7 @@ class LoyaltyInstallationRow(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
-class SqliteLoyaltyInstallationRepository:
+class PostgresLoyaltyInstallationRepository:
     def __init__(self, encrypt_key: str, session_factory: sessionmaker[Session]) -> None:
         self._encrypt_key = encrypt_key
         self._session_factory = session_factory
@@ -53,7 +58,30 @@ class SqliteLoyaltyInstallationRepository:
 
         return None
 
+    def update_locked(
+        self, app_id: str, account_id: str, change: Callable[[LoyaltyInstallation], bool]
+    ) -> LoyaltyInstallation:
+        """
+        Читает подключение, меняет и сохраняет его под advisory lock на пару решение/аккаунт:
+        параллельные запросы одного аккаунта не должны начать подключение с разными токенами.
+        change возвращает False, если сохранять нечего.
+        """
+        with self._session_factory.begin() as session:
+            session.execute(
+                text("select pg_advisory_xact_lock(hashtext(:key))"), {"key": f"loyalty:{app_id}:{account_id}"}
+            )
+            row = session.get(LoyaltyInstallationRow, {"application_id": app_id, "account_id": account_id})
+            installation = LoyaltyInstallation(app_id, account_id) if row is None else self._from_row(row)
+            if change(installation):
+                session.execute(self._upsert(installation))
+
+        return installation
+
     def save(self, installation: LoyaltyInstallation) -> None:
+        with self._session_factory.begin() as session:
+            session.execute(self._upsert(installation))
+
+    def _upsert(self, installation: LoyaltyInstallation):
         timestamp = datetime.now(timezone.utc).isoformat()
         statement = insert(LoyaltyInstallationRow).values(
             application_id=installation.app_id,
@@ -66,7 +94,7 @@ class SqliteLoyaltyInstallationRepository:
             created_at=timestamp,
             updated_at=timestamp,
         )
-        statement = statement.on_conflict_do_update(
+        return statement.on_conflict_do_update(
             index_elements=[LoyaltyInstallationRow.application_id, LoyaltyInstallationRow.account_id],
             set_={
                 "provider_token": statement.excluded.provider_token,
@@ -77,9 +105,6 @@ class SqliteLoyaltyInstallationRepository:
                 "updated_at": statement.excluded.updated_at,
             },
         )
-
-        with self._session_factory.begin() as session:
-            session.execute(statement)
 
     def _from_row(self, row: LoyaltyInstallationRow) -> LoyaltyInstallation:
         return LoyaltyInstallation(
@@ -96,4 +121,10 @@ class SqliteLoyaltyInstallationRepository:
         return None if value is None else encrypt_sensitive(value, self._encrypt_key)
 
     def _decrypt(self, value: str | None) -> str | None:
-        return None if value is None else decrypt_sensitive(value, self._encrypt_key)
+        if value is None:
+            return None
+        try:
+            return decrypt_sensitive(value, self._encrypt_key)
+        except InvalidTag:
+            logger.warning("Loyalty token is encrypted with another APP_ENCRYPT_KEY, treating it as missing")
+            return None

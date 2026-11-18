@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: python_demo_app
+      POSTGRES_USER: python_demo_app
+      POSTGRES_PASSWORD: python_demo_app
+    ports:
+      - "${APP_DB_PORT:-5432}:5432"
+    volumes:
+      - python-demo-app-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U python_demo_app -d python_demo_app"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  python-demo-app:
+    build: .
+    env_file:
+      - path: .env.example
+        required: true
+      - path: .env
+        required: false
+    environment:
+      APP_DB_HOST: postgres
+      APP_DB_PORT: "5432"
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  python-demo-app-pgdata:
